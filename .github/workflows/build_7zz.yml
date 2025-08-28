@@ -27,9 +27,6 @@ jobs:
       - name: Checkout master branch
         uses: actions/checkout@v4
 
-      - name: Download and extract 7zz
-        run: ./master/scripts/fetch-sources -d . nginx/nginx@release-${{ matrix.NGINX_VERSION }}
-
       - name: Install Alpine ${{ env.ALPINE_BRANCH }} for ${{ matrix.ARCH }}
         id: alpine-target
         uses: jirutka/setup-alpine@v1
