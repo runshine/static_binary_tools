@@ -8,7 +8,7 @@ on:
       - build/7zz/*
 
 env:
-  ALPINE_BRANCH: v3.21
+  ALPINE_BRANCH: v3.10
   JOBS: 5
 
 jobs:
