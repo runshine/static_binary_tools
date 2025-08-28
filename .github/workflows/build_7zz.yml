@@ -54,8 +54,8 @@ jobs:
             bash
 
       - name: Build
-        run: ${{ github.workspace }}/build/7zz/build.sh
-        shell: ls -lRt /home/runner/work && alpine.sh {0}
+        run: bash -c ${{ github.workspace }}/build/7zz/build.sh
+        shell: alpine.sh {0}
 
       - name: Upload binary to artifacts
         uses: actions/upload-artifact@v4
