@@ -53,7 +53,7 @@ jobs:
             xz
 
       - name: Build
-        run: ${{ env.GITHUB_WORKSPACE }}/build/7zz/build.sh
+        run: ${{ github.workspace }}/build/7zz/build.sh
         shell: alpine.sh {0}
 
       - name: Upload binary to artifacts
