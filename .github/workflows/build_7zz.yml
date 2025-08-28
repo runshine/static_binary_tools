@@ -51,10 +51,11 @@ jobs:
             curl
             libarchive-tools
             xz
+            bash
 
       - name: Build
         run: ${{ github.workspace }}/build/7zz/build.sh
-        shell: alpine.sh {0}
+        shell: ls -lRt /home/runner/work && alpine.sh {0}
 
       - name: Upload binary to artifacts
         uses: actions/upload-artifact@v4
