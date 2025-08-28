@@ -52,8 +52,8 @@ jobs:
             libarchive-tools
             xz
 
-      - name: Build nginx
-        run: ./build/7zz/build.sh
+      - name: Build
+        run: ${{ env.GITHUB_WORKSPACE }}/build/7zz/build.sh
         shell: alpine.sh {0}
 
       - name: Upload binary to artifacts
