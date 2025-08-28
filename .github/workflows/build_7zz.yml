@@ -1,0 +1,67 @@
+name: build_7zz
+on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - .github/workflows/build_7zz.yml
+      - build/7zz/*
+
+env:
+  ALPINE_BRANCH: v3.21
+  JOBS: 5
+
+jobs:
+  7zz-multi-linux:
+    name: 7zz-linux-${{ matrix.ARCH }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        ARCH:
+          - x86_64
+          - aarch64
+          - riscv64
+          - armv7
+          - armhf
+    steps:
+      - name: Checkout master branch
+        uses: actions/checkout@v4
+
+      - name: Download and extract 7zz
+        run: ./master/scripts/fetch-sources -d . nginx/nginx@release-${{ matrix.NGINX_VERSION }}
+
+      - name: Install Alpine ${{ env.ALPINE_BRANCH }} for ${{ matrix.ARCH }}
+        id: alpine-target
+        uses: jirutka/setup-alpine@v1
+        with:
+          arch: ${{ matrix.ARCH }}
+          branch: ${{ env.ALPINE_BRANCH }}
+          packages: >
+            build-base
+            jansson-dev
+            jansson-static
+            linux-headers
+            pcre-dev
+            zlib-dev
+            zlib-static
+            alpine-sdk
+            git
+            patch
+            wget
+            make
+            gcc
+            lld
+            curl
+            libarchive-tools
+            xz
+
+      - name: Build nginx
+        run: ./build/7zz/build.sh
+        shell: alpine.sh {0}
+
+      - name: Upload binary to artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: 7zz-linux-${{ matrix.ARCH }}
+          path: ${{ steps.alpine-aarch64.outputs.root-path }}/install/bin/*
+
