@@ -10,7 +10,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    strategy:
+      matrix:
+        build_arch: [linux/amd64,linux/arm64/v8,linux/arm/v7,linux/arm/v5,linux/riscv64]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -21,16 +23,19 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push node_vpn
+      - name: Build binary
         uses: docker/build-push-action@v5
         with:
           context: build/7zz/
-          platforms: linux/amd64,linux/arm64/v8,linux/arm/v7,linux/arm/v5,linux/riscv64
+          platforms: ${{ matrix.os }}
           push: false
           tags: local_7zz:latest
           file: Dockerfile
           outputs: |
             type=local,dest=${{ github.workspace }}/output
+
+      - name: List Dir
+        run: ls -lRt ${{ github.workspace }}
 
       - name: Upload binary to artifacts
         uses: actions/upload-artifact@v4
