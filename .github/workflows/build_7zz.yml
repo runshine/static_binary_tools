@@ -13,6 +13,17 @@ jobs:
     strategy:
       matrix:
         build_arch: [linux/amd64,linux/arm64/v8,linux/arm/v7,linux/arm/v5,linux/riscv64]
+        include:
+          - build_name: x86_64
+            build_arch: linux/amd64
+          - build_name: aarch64
+            build_arch: linux/arm64/v8
+          - build_name: armhf
+            build_arch: linux/arm/v7
+          - build_name: armel
+            build_arch: linux/arm/v5
+          - build_name: riscv64
+            build_arch: linux/riscv64
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,7 +38,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: build/7zz/
-          platforms: ${{ matrix.os }}
+          platforms: ${{ matrix.build_arch }}
           push: false
           tags: local_7zz:latest
           file: Dockerfile
@@ -40,5 +51,6 @@ jobs:
       - name: Upload binary to artifacts
         uses: actions/upload-artifact@v4
         with:
+          #name: ${{ matrix.build_name }}
           path: ${{ github.workspace }}/output/build/install/bin/*
 
