@@ -17,6 +17,6 @@ rm -f /opt/source/7z-${VERSION}-src.tar.xz
 cd /opt/build/7z-${VERSION}/CPP/7zip/Bundles/Alone2
 make CFLAGS_BASE_LIST="-c -static -D_7ZIP_AFFINITY_DISABLE=1 -DZ7_AFFINITY_DISABLE=1 -D_GNU_SOURCE=1" MY_ASM=uasm MY_ARCH="-static" CFLAGS_WARN_WALL="-Wall -Wextra" -f ../../cmpl_gcc.mak
 strip /opt/build/7z-${VERSION}/CPP/7zip/Bundles/Alone2/b/g/7zz
-mkdir -p /opt/install/bin/7zz
+mkdir -p /opt/install/bin
 mv /opt/build/7z-${VERSION}/CPP/7zip/Bundles/Alone2/b/g/7zz /opt/install/bin/7zz
 
