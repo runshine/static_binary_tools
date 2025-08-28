@@ -12,7 +12,7 @@ env:
   JOBS: 5
 
 jobs:
-  7zz-multi-linux:
+  build-multi-linux:
     name: 7zz-linux-${{ matrix.ARCH }}
     runs-on: ubuntu-latest
     strategy:
