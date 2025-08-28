@@ -4,19 +4,25 @@ set -e
 
 VERSION=2409
 TZ=Europe/London
+HOME_SPACE="$(cd `dirname $0`;pwd)/../.."
 
-mkdir -p /opt/source
-mkdir -p /opt/build
-mkdir -p /opt/install
-curl -o /opt/source/7z-${VERSION}-src.tar.xz "https://www.7-zip.org/a/7z${VERSION}-src.tar.xz"
-[ -d "/opt/build/7z-${VERSION}" ] && rm -rf "/opt/build/7z-${VERSION}"
-mkdir /opt/build/7z-${VERSION}
-cd /opt/build/7z-${VERSION} && tar -xf /opt/source/7z-${VERSION}-src.tar.xz
-rm -f /opt/source/7z-${VERSION}-src.tar.xz
+mkdir -p "${HOME_SPACE}/source"
+mkdir -p "${HOME_SPACE}/build"
+mkdir -p "${HOME_SPACE}/install"
 
-cd /opt/build/7z-${VERSION}/CPP/7zip/Bundles/Alone2
+SOURCE_DIR="${HOME_SPACE}/source"
+BUILD_DIR="${HOME_SPACE}/build"
+INSTALL_DIR="${HOME_SPACE}/install"
+
+curl -o "${SOURCE_DIR}/7z-${VERSION}-src.tar.xz" "https://www.7-zip.org/a/7z${VERSION}-src.tar.xz"
+[ -d "${BUILD_DIR}/7z-${VERSION}" ] && rm -rf "${BUILD_DIR}/7z-${VERSION}"
+mkdir "${BUILD_DIR}/7z-${VERSION}"
+cd "${BUILD_DIR}/7z-${VERSION}" && tar -xf "${SOURCE_DIR}/7z-${VERSION}-src.tar.xz"
+rm -f "${SOURCE_DIR}/7z-${VERSION}-src.tar.xz"
+
+cd "${BUILD_DIR}/7z-${VERSION}/CPP/7zip/Bundles/Alone2"
 make CFLAGS_BASE_LIST="-c -static -D_7ZIP_AFFINITY_DISABLE=1 -DZ7_AFFINITY_DISABLE=1 -D_GNU_SOURCE=1" MY_ASM=uasm MY_ARCH="-static" CFLAGS_WARN_WALL="-Wall -Wextra" -f ../../cmpl_gcc.mak
-strip /opt/build/7z-${VERSION}/CPP/7zip/Bundles/Alone2/b/g/7zz
-mkdir -p /opt/install/bin
-mv /opt/build/7z-${VERSION}/CPP/7zip/Bundles/Alone2/b/g/7zz /opt/install/bin/7zz
+strip "${BUILD_DIR}/7z-${VERSION}/CPP/7zip/Bundles/Alone2/b/g/7zz"
+mkdir -p  "${INSTALL_DIR}/bin"
+mv "${BUILD_DIR}/7z-${VERSION}/CPP/7zip/Bundles/Alone2/b/g/7zz" "${INSTALL_DIR}/bin/7zz"
 
