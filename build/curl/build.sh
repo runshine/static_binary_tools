@@ -25,7 +25,7 @@ cd curl-${CURL_VERSION}/
 
 ./configure --prefix=${INSTALL_DIR} --disable-shared --enable-static --disable-ldap --enable-ipv6 --enable-unix-sockets --with-ssl=$(pkg-config --variable=prefix  openssl) --with-libssh2 --disable-docs --disable-manual --without-libpsl
 
-sed -i "s/-pthread/-pthread -latomic/g" src/Makefile
+sed -i "s/-lzstd/-lzstd -latomic/g" src/Makefile
 
 make -j4 V=1 LDFLAGS="-static -all-static"
 
