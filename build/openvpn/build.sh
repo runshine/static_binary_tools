@@ -21,7 +21,7 @@ cd /home/source
 wget https://www.oberhumer.com/opensource/lzo/download/lzo-2.10.tar.gz
 tar xvzf lzo-2.10.tar.gz
 cd lzo-2.10
-./configure --prefix=/home/openvpn --enable-static --target=arm-linux-gnueabi --host=arm-linux-gnueabi
+./configure --prefix=/home/openvpn --enable-static
 make && make install
 
 cd /home/source
@@ -34,14 +34,14 @@ cd /home/source
 wget https://www.openssl.org/source/openssl-1.1.1h.tar.gz
 tar xvzf openssl-1.1.1h.tar.gz
 cd openssl-1.1.1h
-./Configure gcc -static -no-shared --prefix=/home/openvpn --cross-compile-prefix=arm-linux-gnueabi-
+./Configure gcc -static -no-shared --prefix=/home/openvpn
 make && make install
 
 cd /home/source
 wget https://swupdate.openvpn.org/community/releases/openvpn-2.4.9.tar.gz
 tar xvzf openvpn-2.4.9.tar.gz
 cd openvpn-2.4.9
-./configure --target=arm-linux-gnueabi --host=arm-linux-gnueabi --prefix=/home/openvpn --enable-static --disable-shared --disable-debug --disable-plugins OPENSSL_CFLAGS="-I/home/openvpn/include" OPENSSL_LIBS="-L/home/openvpn/lib -lssl -lcrypto" LZO_CFLAGS="-I/home/openvpn/include" LZO_LIBS="-L/home/openvpn/lib -llzo2" LZ4_CFLAGS="-I/home/openvpn/include" LZ4_LIBS="-L/home/openvpn/lib -llz4" IFCONFIG=/sbin/ifconfig ROUTE=/sbin/route NETSTAT=/bin/netstat IPROUTE=/sbin/ip --enable-iproute2
+./configure --prefix=/home/openvpn --enable-static --disable-shared --disable-debug --disable-plugins OPENSSL_CFLAGS="-I/home/openvpn/include" OPENSSL_LIBS="-L/home/openvpn/lib -lssl -lcrypto" LZO_CFLAGS="-I/home/openvpn/include" LZO_LIBS="-L/home/openvpn/lib -llzo2" LZ4_CFLAGS="-I/home/openvpn/include" LZ4_LIBS="-L/home/openvpn/lib -llz4" IFCONFIG=/sbin/ifconfig ROUTE=/sbin/route NETSTAT=/bin/netstat IPROUTE=/sbin/ip --enable-iproute2
 make LIBS="-all-static" && make install
 
 cd /home/openvpn/sbin/
