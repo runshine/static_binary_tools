@@ -13,7 +13,7 @@ SOURCE_DIR="${HOME_SPACE}/source"
 BUILD_DIR="${HOME_SPACE}/build"
 INSTALL_DIR="${HOME_SPACE}/install"
 
-apt install -qq -y git gnupg curl autoconf
+apt install -y git gnupg curl autoconf
 
 #cd /data && ./build.sh linux ${{matrix.arch}} && mv -v releases/bash releases/bash-linux-${{matrix.arch}}
 bash_version="5.2"

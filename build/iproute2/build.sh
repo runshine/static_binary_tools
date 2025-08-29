@@ -13,7 +13,7 @@ SOURCE_DIR="${HOME_SPACE}/source"
 BUILD_DIR="${HOME_SPACE}/build"
 INSTALL_DIR="${HOME_SPACE}/install"
 
-apt install -qq -y git gnupg curl autoconf libssl-dev pkg-config bison flex
+apt install -y git gnupg curl autoconf libssl-dev pkg-config bison flex
 
 cd ${SOURCE_DIR}
 git clone https://github.com/iproute2/iproute2.git
