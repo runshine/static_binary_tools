@@ -13,7 +13,7 @@ SOURCE_DIR="${HOME_SPACE}/source"
 BUILD_DIR="${HOME_SPACE}/build"
 INSTALL_DIR="${HOME_SPACE}/install"
 
-apt-get -qq -y install build-essential gcc-arm-linux-gnueabi ca-certificates
+apt-get -qq -y install build-essential gcc-arm-linux-gnueabi ca-certificates wget
 
 mkdir /home/source /home/openvpn
 cd /home/source
