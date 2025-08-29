@@ -39,5 +39,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: gdb-linux-multi
-          path: ${{ github.workspace }}/build/artifacts/*
+          path: ${{ github.workspace }}/build/artifacts/gdb-static-*.gz
 
