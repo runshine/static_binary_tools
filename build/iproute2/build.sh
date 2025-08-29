@@ -23,4 +23,4 @@ LDFLAGS="-static" PKG_CONFIG="pkg-config --static" ./configure --prefix ${INSTAL
 make -j4 V=1 LDFLAGS="-static"
 mkdir -p ${BUILD_DIR}/bin
 cp bridge/bridge ${BUILD_DIR}/bin/bridge-linux-$(uname -m)
-cp bridge/ip ${BUILD_DIR}/bin/ip-linux-$(uname -m)
+cp ip/ip ${BUILD_DIR}/bin/ip-linux-$(uname -m)
