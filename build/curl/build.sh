@@ -1,0 +1,40 @@
+#!/bin/bash
+
+set -e
+
+TZ=Europe/London
+HOME_SPACE="$(cd `dirname $0`;pwd)/"
+
+mkdir -p "${HOME_SPACE}/source"
+mkdir -p "${HOME_SPACE}/build"
+mkdir -p "${HOME_SPACE}/install"
+
+SOURCE_DIR="${HOME_SPACE}/source"
+BUILD_DIR="${HOME_SPACE}/build"
+INSTALL_DIR="${HOME_SPACE}/install"
+
+apt install -qq -y git gnupg curl autoconf  libssl-dev zlib1g-dev libssh2-1-dev clang llvm
+CURL_VERSION='8.11.0'
+export CC=clang
+
+curl -o ${HOME_SPACE}/source/curl-${CURL_VERSION}.tar.gz https://curl.se/download/curl-${CURL_VERSION}.tar.gz
+mkdir -p "${BUILD_DIR}" && tar -zxvf ${HOME_SPACE}/source/curl-${CURL_VERSION}.tar.gz
+
+cd curl-${CURL_VERSION}/
+
+LDFLAGS="-static" PKG_CONFIG="pkg-config --static" ./configure --prefix=${INSTALL_DIR} --disable-shared --enable-static --disable-ldap --enable-ipv6 --enable-unix-sockets --with-ssl --with-libssh2 --disable-docs --disable-manual --without-libpsl
+
+make -j4 V=1 LDFLAGS="-all-static"
+
+# binary is ~13M before stripping, 2.6M after
+strip src/curl
+
+# print out some info about this, size, and to ensure it's actually fully static
+ls -lah src/curl
+file src/curl
+# exit with error code 1 if the executable is dynamic, not static
+ldd src/curl && exit 1 || true
+
+./src/curl -V
+
+mkdir -p ${INSTALL_DIR}/bin/ && cp src/curl ${INSTALL_DIR}/bin/curl-linux-$(uname -m)

@@ -2,7 +2,6 @@
 
 set -e
 
-VERSION=2409
 TZ=Europe/London
 HOME_SPACE="$(cd `dirname $0`;pwd)/"
 
@@ -13,6 +12,8 @@ mkdir -p "${HOME_SPACE}/install"
 SOURCE_DIR="${HOME_SPACE}/source"
 BUILD_DIR="${HOME_SPACE}/build"
 INSTALL_DIR="${HOME_SPACE}/install"
+
+VERSION=2409
 
 curl -o "${SOURCE_DIR}/7z-${VERSION}-src.tar.xz" "https://www.7-zip.org/a/7z${VERSION}-src.tar.xz"
 [ -d "${BUILD_DIR}/7z-${VERSION}" ] && rm -rf "${BUILD_DIR}/7z-${VERSION}"
