@@ -21,6 +21,6 @@ cd iproute2
 
 LDFLAGS="-static" PKG_CONFIG="pkg-config --static" ./configure --prefix ${INSTALL_DIR} --disable-shared --enable-static
 make -j4 V=1 LDFLAGS="-static"
-mkdir -p ${BUILD_DIR}/bin
-cp bridge/bridge ${BUILD_DIR}/bin/bridge-linux-$(uname -m)
-cp ip/ip ${BUILD_DIR}/bin/ip-linux-$(uname -m)
+mkdir -p ${INSTALL_DIR}/bin
+cp bridge/bridge ${INSTALL_DIR}/bin/bridge-linux-$(uname -m)
+cp ip/ip ${INSTALL_DIR}/bin/ip-linux-$(uname -m)
