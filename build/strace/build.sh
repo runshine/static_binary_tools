@@ -13,7 +13,7 @@ SOURCE_DIR="${HOME_SPACE}/source"
 BUILD_DIR="${HOME_SPACE}/build"
 INSTALL_DIR="${HOME_SPACE}/install"
 
-apt-get -y install curl ca-certificates wget
+apt-get -y install curl ca-certificates wget xz-utils
 
 curl -o "${SOURCE_DIR}/strace-6.16.tar.xz" https://strace.io/files/6.16/strace-6.16.tar.xz
 cd "${BUILD_DIR}" && tar -xf "${SOURCE_DIR}/strace-6.16.tar.xz"

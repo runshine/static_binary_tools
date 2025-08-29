@@ -13,11 +13,16 @@ SOURCE_DIR="${HOME_SPACE}/source"
 BUILD_DIR="${HOME_SPACE}/build"
 INSTALL_DIR="${HOME_SPACE}/install"
 
-apt-get -y install curl ca-certificates wget libpcap-dev libssl-dev autoconf make cmake
+apt-get -y install curl ca-certificates wget libssl-dev autoconf make cmake xz-utils flex bison
+
+curl -o "${SOURCE_DIR}/libpcap-1.10.5.tar.xz" https://www.tcpdump.org/release/libpcap-1.10.5.tar.xz
+cd "${BUILD_DIR}" && tar -xf "${SOURCE_DIR}/libpcap-1.10.5.tar.xz"
+cd "${BUILD_DIR}/libpcap-1.10.5"
+./configure --prefix=/usr
+make -j4 && make install
 
 curl -o "${SOURCE_DIR}/tcpdump-4.99.5.tar.xz" https://www.tcpdump.org/release/tcpdump-4.99.5.tar.xz
 cd "${BUILD_DIR}" && tar -xf "${SOURCE_DIR}/tcpdump-4.99.5.tar.xz"
 cd "${BUILD_DIR}/tcpdump-4.99.5"
-LDFLAGS='-static -pthread' ./configure --prefix=${INSTALL_DIR} --disable-shared --enable-static
-LDFLAGS='-static -all-static -pthread' make -j4
-make install
+CFLAGS='-static -lssl' ./configure --prefix=${INSTALL_DIR}
+ make -j4 && make install
