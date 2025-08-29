@@ -20,7 +20,7 @@ jobs:
       - name: Checkout https://github.com/guyush1/gdb-static.git
         uses: actions/checkout@v4
         with:
-          repository: https://github.com/guyush1/gdb-static.git
+          repository: guyush1/gdb-static
           submodules: recursive
 
       - name: Install dependencies
