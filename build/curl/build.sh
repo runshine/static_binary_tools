@@ -13,7 +13,7 @@ SOURCE_DIR="${HOME_SPACE}/source"
 BUILD_DIR="${HOME_SPACE}/build"
 INSTALL_DIR="${HOME_SPACE}/install"
 
-apt install -qq -y git gnupg curl autoconf  libssl-dev zlib1g-dev libssh2-1-dev clang llvm pkg-config libzstd-dev
+apt install -y git gnupg curl autoconf  libssl-dev zlib1g-dev libssh2-1-dev clang llvm pkg-config libzstd-dev
 pkg-config --modversion openssl
 CURL_VERSION='8.11.0'
 export CC=clang
@@ -25,7 +25,9 @@ cd curl-${CURL_VERSION}/
 
 ./configure --prefix=${INSTALL_DIR} --disable-shared --enable-static --disable-ldap --enable-ipv6 --enable-unix-sockets --with-ssl=$(pkg-config --variable=prefix  openssl) --with-libssh2 --disable-docs --disable-manual --without-libpsl
 
-make -j4 V=1 LDFLAGS="-static -all-static -latomic"
+sed -i "s/-pthread/-pthread -latomic/g" src/Makefile
+
+make -j4 V=1 LDFLAGS="-static -all-static"
 
 # binary is ~13M before stripping, 2.6M after
 strip src/curl
