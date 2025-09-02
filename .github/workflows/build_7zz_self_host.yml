@@ -1,0 +1,25 @@
+name: build_7zz
+on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - .github/workflows/build_7zz_self_host.yml
+      - build/7zz/*
+      - Dockerfile
+
+jobs:
+  build_armel:
+    runs-on: armel
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: List Dir
+        run: ls -lRt ${{ github.workspace }}
+
+
+
