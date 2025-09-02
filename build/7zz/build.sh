@@ -3,7 +3,10 @@
 set -e
 
 TZ=Europe/London
-HOME_SPACE="$(cd `dirname $0`;pwd)/"
+
+if [ "x${HOME_SPACE}" = "x" ] || [ ! -d "${HOME_SPACE}" ];then
+  HOME_SPACE="$(cd `dirname $0`;pwd)/"
+fi
 
 mkdir -p "${HOME_SPACE}/source"
 mkdir -p "${HOME_SPACE}/build"

@@ -1,4 +1,4 @@
-name: build_7zz
+name: build_7zz_self_host
 on:
   push:
     branches:
@@ -15,8 +15,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - name: build
+        run: ${{ github.workspace }}/build/7zz/build.sh
 
       - name: List Dir
         run: ls -lRt ${{ github.workspace }}
