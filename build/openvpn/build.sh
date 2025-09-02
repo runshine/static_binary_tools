@@ -1,17 +1,6 @@
 #!/bin/bash
 
-set -e
-
-TZ=Europe/London
-HOME_SPACE="$(cd `dirname $0`;pwd)/"
-
-mkdir -p "${HOME_SPACE}/source"
-mkdir -p "${HOME_SPACE}/build"
-mkdir -p "${HOME_SPACE}/install"
-
-SOURCE_DIR="${HOME_SPACE}/source"
-BUILD_DIR="${HOME_SPACE}/build"
-INSTALL_DIR="${HOME_SPACE}/install"
+source "$(cd `dirname $0`;pwd)/../common/prepare_dir.sh"
 
 apt-get -y install build-essential ca-certificates wget
 
