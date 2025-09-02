@@ -12,7 +12,7 @@ jobs:
   build_armel:
     runs-on: armel
     env:
-      HOME_SPACE: ${{ github.workspace }}
+      HOME_SPACE: ${{ github.workspace }}/output/build
     steps:
       - name: Checkout
         uses: actions/checkout@v4
