@@ -2,17 +2,20 @@
 
 source "$(cd `dirname $0`;pwd)/../common/prepare_dir.sh"
 
-apt-get -y install curl ca-certificates wget xz-utils libssl-dev libncurses-dev autoconf git libwrap0-dev libreadline-dev
+VERSION="1.10.5"
+PACKAGE="libpcap"
+apt-get -y install curl ca-certificates wget xz-utils libssl-dev libncurses-dev autoconf git libwrap0-dev libreadline-dev flex bison
 
-cd "${SOURCE_DIR}"
-git clone http://repo.or.cz/socat.git
+curl -o "${SOURCE_DIR}/${PACKAGE}-${VERSION}.tar.xz" "https://www.tcpdump.org/release/${PACKAGE}-${VERSION}.tar.xz"
+[ -d "${BUILD_DIR}/${PACKAGE}-${VERSION}" ] && rm -rf "${PACKAGE}-${VERSION}"
+mkdir "${BUILD_DIR}/" && tar -xf "${SOURCE_DIR}/${PACKAGE}-${VERSION}.tar.xz"
+rm -f "${SOURCE_DIR}/${PACKAGE}-${VERSION}.tar.xz"
 
-cd "${SOURCE_DIR}/socat"
-git clean -fdx
-autoconf
-LDFLAGS="-static" ./configure --prefix="${INSTALL_DIR}" --enable-openssl-base --enable-openssl-method --enable-resolve --enable-fips
+cd "${BUILD_DIR}/${PACKAGE}-${VERSION}"
+LDFLAGS='-static' ./configure --enable-remote --prefix="${INSTALL_DIR}" --disable-shared
 make -j 4
-strip -s "socat"
-mkdir -p "${INSTALL_DIR}/bin" && mv "socat" "${INSTALL_DIR}/bin/socat-linux-$(uname -m)"
 
+strip -s "./rpcapd/rpcapd"
+mkdir -p  "${INSTALL_DIR}/bin"
+mv "./rpcapd/rpcapd" "${INSTALL_DIR}/bin/rpcapd-linux-$(uname -m)"
 
