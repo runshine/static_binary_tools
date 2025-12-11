@@ -11,3 +11,6 @@ LDFLAGS='-static -pthread' ./configure --prefix=${INSTALL_DIR} --disable-shared 
 LDFLAGS='-static -all-static -pthread' make -j4
 make install
 
+strip_elf_files "$INSTALL_DIR/sbin"
+strip_elf_files "$INSTALL_DIR/bin"
+package_release_tar "${INSTALL_DIR}" strace-linux-$(uname -m).tar.gz

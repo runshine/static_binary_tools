@@ -15,3 +15,7 @@ cd "${BUILD_DIR}" && tar -xf "${SOURCE_DIR}/tcpdump-4.99.5.tar.xz"
 cd "${BUILD_DIR}/tcpdump-4.99.5"
 CFLAGS='-static -lssl' ./configure --prefix=${INSTALL_DIR}
  make -j4 && make install
+
+strip_elf_files "$INSTALL_DIR/sbin"
+strip_elf_files "$INSTALL_DIR/bin"
+package_release_tar "${INSTALL_DIR}" tcpdump-linux-$(uname -m).tar.gz

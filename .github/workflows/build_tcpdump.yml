@@ -53,5 +53,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: tcpdump-linux-${{ matrix.build_name }}
-          path: ${{ github.workspace }}/output/build/install/bin/*
+          path: ${{ github.workspace }}/output/build/install/*
 
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: v1.0
+          name: "Release v1.0"
+          artifacts: "${{ github.workspace }}/output/build/install/*"
+          artifactErrorsFailBuild: false
+          allowUpdates: true  # 允许更新已存在的release
+          token: ${{ secrets.GITHUB_TOKEN }}

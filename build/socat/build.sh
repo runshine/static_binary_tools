@@ -13,5 +13,8 @@ autoconf
 LDFLAGS="-static" ./configure --prefix="${INSTALL_DIR}" --enable-openssl-base --enable-openssl-method --enable-resolve --enable-fips
 make -j 4
 strip -s "socat"
-mkdir -p "${INSTALL_DIR}/bin" && mv "socat" "${INSTALL_DIR}/bin/socat-linux-$(uname -m)"
+mkdir -p "${INSTALL_DIR}/bin" && mv "socat" "${INSTALL_DIR}/bin/socat"
 
+strip_elf_files "$INSTALL_DIR/sbin"
+strip_elf_files "$INSTALL_DIR/bin"
+package_release_tar "${INSTALL_DIR}" socat-linux-$(uname -m).tar.gz

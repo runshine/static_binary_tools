@@ -35,4 +35,8 @@ make LIBS="-all-static" && make install
 
 cd /home/openvpn/sbin/
 mkdir -p "${INSTALL_DIR}/bin"
-cp openvpn ${INSTALL_DIR}/bin/openvpn-linux-$(uname -m)
+cp openvpn ${INSTALL_DIR}/bin/openvpn
+
+strip_elf_files "$INSTALL_DIR/sbin"
+strip_elf_files "$INSTALL_DIR/bin"
+package_release_tar "${INSTALL_DIR}" openvpn-linux-$(uname -m).tar.gz

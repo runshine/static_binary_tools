@@ -41,3 +41,12 @@ jobs:
           name: gdb-linux-multi
           path: ${{ github.workspace }}/build/artifacts/gdb-static-*.gz
 
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: v1.0
+          name: "Release v1.0"
+          artifacts: "${{ github.workspace }}/build/artifacts/gdb-static-*.gz"
+          artifactErrorsFailBuild: false
+          allowUpdates: true  # 允许更新已存在的release
+          token: ${{ secrets.GITHUB_TOKEN }}

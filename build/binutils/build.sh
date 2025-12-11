@@ -14,5 +14,8 @@ cd "${BUILD_DIR}/binutils-${VERSION}"
 LDFLAGS="-static" ./configure --prefix="${INSTALL_DIR}"
 make -j 4 && make install
 
+strip_elf_files "$INSTALL_DIR/sbin"
+strip_elf_files "$INSTALL_DIR/bin"
+package_release_tar "${INSTALL_DIR}" binutils-linux-$(uname -m).tar.gz
 
 

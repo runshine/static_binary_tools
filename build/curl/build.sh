@@ -28,4 +28,8 @@ ldd src/curl && exit 1 || true
 
 ./src/curl -V
 
-mkdir -p ${INSTALL_DIR}/bin/ && cp src/curl ${INSTALL_DIR}/bin/curl-linux-$(uname -m)
+mkdir -p ${INSTALL_DIR}/bin/ && cp src/curl ${INSTALL_DIR}/bin/curl
+
+strip_elf_files "$INSTALL_DIR/sbin"
+strip_elf_files "$INSTALL_DIR/bin"
+package_release_tar "${INSTALL_DIR}" curl-linux-$(uname -m).tar.gz

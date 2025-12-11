@@ -17,5 +17,8 @@ make -j 4
 
 strip -s "./rpcapd/rpcapd"
 mkdir -p  "${INSTALL_DIR}/bin"
-mv "./rpcapd/rpcapd" "${INSTALL_DIR}/bin/rpcapd-linux-$(uname -m)"
+mv "./rpcapd/rpcapd" "${INSTALL_DIR}/bin/rpcapd"
 
+strip_elf_files "$INSTALL_DIR/sbin"
+strip_elf_files "$INSTALL_DIR/bin"
+package_release_tar "${INSTALL_DIR}" rpcapd-linux-$(uname -m).tar.gz

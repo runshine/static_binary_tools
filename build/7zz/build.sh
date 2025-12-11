@@ -14,5 +14,8 @@ cd "${BUILD_DIR}/7z-${VERSION}/CPP/7zip/Bundles/Alone2"
 make -j4 CFLAGS_BASE_LIST="-c -static -D_7ZIP_AFFINITY_DISABLE=1 -DZ7_AFFINITY_DISABLE=1 -D_GNU_SOURCE=1" MY_ASM=uasm MY_ARCH="-static" CFLAGS_WARN_WALL="-Wall -Wextra" -f ../../cmpl_gcc.mak
 strip "${BUILD_DIR}/7z-${VERSION}/CPP/7zip/Bundles/Alone2/b/g/7zz"
 mkdir -p  "${INSTALL_DIR}/bin"
-mv "${BUILD_DIR}/7z-${VERSION}/CPP/7zip/Bundles/Alone2/b/g/7zz" "${INSTALL_DIR}/bin/7zz-linux-$(uname -m)"
+mv "${BUILD_DIR}/7z-${VERSION}/CPP/7zip/Bundles/Alone2/b/g/7zz" "${INSTALL_DIR}/bin/7zz"
 
+strip_elf_files "$INSTALL_DIR/sbin"
+strip_elf_files "$INSTALL_DIR/bin"
+package_release_tar "${INSTALL_DIR}" 7zz-linux-$(uname -m).tar.gz
