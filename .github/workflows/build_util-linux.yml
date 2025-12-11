@@ -53,5 +53,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: util-linux-linux-${{ matrix.build_name }}
-          path: ${{ github.workspace }}/output/build/*.tar.gz
+          path: ${{ github.workspace }}/output/build/install/*
 
