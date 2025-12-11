@@ -59,5 +59,5 @@ else
 fi
 
 
-cd "${INSTALL_DIR}" &&tar -czvf ../util-linux-linux-$(uname -m).tar.gz" *
+cd "${INSTALL_DIR}" &&tar -czvf ../util-linux-linux-$(uname -m).tar.gz *
 
