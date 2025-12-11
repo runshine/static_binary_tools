@@ -2,7 +2,7 @@ FROM debian:latest as builder
 LABEL previous-stage=builder
 
 # prepare builder
-RUN apt update -qq && apt install -qq -y build-essential curl gpg
+RUN apt update -qq && apt install -qq -y build-essential curl gpg python3
 # do make
 RUN mkdir -p /build/
 
