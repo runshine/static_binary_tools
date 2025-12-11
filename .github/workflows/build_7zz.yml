@@ -55,20 +55,13 @@ jobs:
           name: 7zz-linux-${{ matrix.build_name }}
           path: ${{ github.workspace }}/output/build/install/bin/*
 
-      - name: Release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: v1.0  # 固定的tag名称
-          name: v1.0      # release标题
-          draft: false    # 直接发布，不存为草稿
-          prerelease: false
-          generate_release_notes: true  # 自动生成发布说明
-          # 如果release已存在，会失败，需要设置下面的参数
-          update: true  # 如果release已存在则更新
-          body: |
-            ## Release v1.0
-          files: |
-            ${{ github.workspace }}/output/build/install/bin/*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: v1.0
+          name: "Release v1.0"
+          artifacts: "${{ github.workspace }}/output/build/install/bin/*"
+          artifactErrorsFailBuild: false
+          allowUpdates: true  # 允许更新已存在的release
+          token: ${{ secrets.GITHUB_TOKEN }}
