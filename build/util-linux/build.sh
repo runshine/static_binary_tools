@@ -2,7 +2,7 @@
 
 source "$(cd `dirname $0`;pwd)/../common/prepare_dir.sh"
 
-apt-get -y install curl ca-certificates wget xz-utils libsqlite3-dev
+apt-get -y install curl ca-certificates wget xz-utils libsqlite3-dev libncurses-dev
 
 curl -o "${SOURCE_DIR}/util-linux-2.41.2.tar.gz" https://www.kernel.org/pub/linux/utils/util-linux/v2.41/util-linux-2.41.2.tar.xz
 cd "${BUILD_DIR}" && tar -xf "${SOURCE_DIR}/util-linux-2.41.2.tar.gz"
