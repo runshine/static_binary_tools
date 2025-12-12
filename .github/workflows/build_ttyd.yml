@@ -1,0 +1,40 @@
+name: build_ttyd
+on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - .github/workflows/build_ttyd.yml
+      - build/tyd/*
+      - Dockerfile
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up ttyd binary
+        run: | 
+          mkdir -p ${{ github.workspace }}/output/build/install/*
+          bash ${{ github.workspace }}/build/ttyd/build.sh
+
+      - name: List Dir
+        run: ls -lRt ${{ github.workspace }}
+
+      - name: Upload binary to artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: iproute2-linux-${{ matrix.build_name }}
+          path: ${{ github.workspace }}/output/build/install/*
+
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: v1.0
+          name: "Release v1.0"
+          artifacts: "${{ github.workspace }}/output/build/install/*"
+          artifactErrorsFailBuild: false
+          allowUpdates: true  # 允许更新已存在的release
+          token: ${{ secrets.GITHUB_TOKEN }}
