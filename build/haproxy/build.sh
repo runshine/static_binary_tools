@@ -15,7 +15,7 @@ rm -f "${SOURCE_DIR}/${PACKAGE}-${VERSION}.tar.gz"
 
 cd "${BUILD_DIR}/${PACKAGE}-${VERSION}"
 sed -i 's/CC = cc/CC = cc -static -lz/g' Makefile
-make -j 8 TARGET=linux-glibc CFLAGS=-static PREFIX="${INSTALL_DIR}" USE_OPENSSL=1 USE_QUIC=1 USE_QUIC_OPENSSL_COMPAT=1 USE_LUA=1 USE_PCRE2=1 install
+make -j 8 TARGET=linux-glibc CFLAGS=-static PREFIX="${INSTALL_DIR}" USE_OPENSSL=1 USE_QUIC=1 USE_QUIC_OPENSSL_COMPAT=1 USE_LUA=0 USE_PCRE2=1 install
 
 strip_elf_files "$INSTALL_DIR/sbin"
 strip_elf_files "$INSTALL_DIR/bin"
