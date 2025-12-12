@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/build_socat.yml
       - build/socat/*
+      - build/common/*
       - Dockerfile
 
 jobs:

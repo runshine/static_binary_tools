@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/build_gdb.yml
       - build/gdb/*
+      - build/common/*
       - Dockerfile
 
 jobs:

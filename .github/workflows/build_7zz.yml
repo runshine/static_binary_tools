@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/build_7zz.yml
       - build/7zz/*
+      - build/common/*
       - Dockerfile
 
 jobs:

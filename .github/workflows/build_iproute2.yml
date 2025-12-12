@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/build_iproute2.yml
       - build/iproute2/*
+      - build/common/*
       - Dockerfile
 
 jobs:

@@ -7,6 +7,7 @@ on:
       - .github/workflows/build_util-linux.yml
       - build/util-linux/*
       - Dockerfile
+      - build/common/*
 
 jobs:
   build:

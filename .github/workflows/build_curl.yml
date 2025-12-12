@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/build_curl.yml
       - build/curl/*
+      - build/common/*
       - Dockerfile
 
 jobs:

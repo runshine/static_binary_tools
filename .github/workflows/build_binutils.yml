@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/build_binutils.yml
       - build/binutils/*
+      - build/common/*
       - Dockerfile
 
 jobs:

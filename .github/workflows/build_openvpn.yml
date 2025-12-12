@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/build_openvpn.yml
       - build/openvpn/*
+      - build/common/*
       - Dockerfile
 
 jobs:

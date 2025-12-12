@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/build_ttyd.yml
       - build/ttyd/*
+      - build/common/*
 
 jobs:
   build:

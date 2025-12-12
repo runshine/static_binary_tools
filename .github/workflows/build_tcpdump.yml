@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/build_tcpdump.yml
       - build/tcpdump/*
+      - build/common/*
       - Dockerfile
 
 jobs:
