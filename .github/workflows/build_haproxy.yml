@@ -1,11 +1,11 @@
-name: build_7zz
+name: build_haproxy
 on:
   push:
     branches:
       - '**'
     paths:
-      - .github/workflows/build_7zz.yml
-      - build/7zz/*
+      - .github/workflows/build_haproxy.yml
+      - build/curl/*
       - build/common/*
       - Dockerfile
 
@@ -39,10 +39,10 @@ jobs:
       - name: Build binary
         uses: docker/build-push-action@v5
         with:
-          context: build/7zz/
+          context: build/haproxy/
           platforms: ${{ matrix.build_arch }}
           push: false
-          tags: local_7zz:latest
+          tags: local_haproxy:latest
           file: Dockerfile
           outputs: |
             type=local,dest=${{ github.workspace }}/output
@@ -53,7 +53,7 @@ jobs:
       - name: Upload binary to artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: 7zz-linux-${{ matrix.build_name }}
+          name: haproxy-linux-${{ matrix.build_name }}
           path: ${{ github.workspace }}/output/build/install/*
 
       - name: Create Release
