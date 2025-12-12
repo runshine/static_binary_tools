@@ -5,7 +5,7 @@ source "$(cd `dirname $0`;pwd)/../common/utils_func.sh"
 source "$(cd `dirname $0`;pwd)/../common/arch_detect.sh"
 
 VERSION="3.3.0"
-PACKAGE="libpcap"
+PACKAGE="haproxy"
 apt-get -y install curl ca-certificates wget xz-utils libssl-dev libncurses-dev autoconf git libwrap0-dev libreadline-dev flex bison  liblua5.3-dev libpcre2-dev
 
 curl -o "${SOURCE_DIR}/${PACKAGE}-${VERSION}.tar.gz" "https://www.haproxy.org/download/3.3/src/haproxy-3.3.0.tar.gz"
