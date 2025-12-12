@@ -2,6 +2,7 @@
 
 source "$(cd `dirname $0`;pwd)/../common/prepare_dir.sh"
 source "$(cd `dirname $0`;pwd)/../common/utils_func.sh"
+source "$(cd `dirname $0`;pwd)/../common/arch_detect.sh"
 
 sudo apt update && sudo apt-get -y install curl
 

@@ -2,6 +2,7 @@
 
 source "$(cd `dirname $0`;pwd)/../common/prepare_dir.sh"
 source "$(cd `dirname $0`;pwd)/../common/utils_func.sh"
+source "$(cd `dirname $0`;pwd)/../common/arch_detect.sh"
 
 apt-get -y install curl ca-certificates wget xz-utils
 
@@ -14,4 +15,4 @@ make install
 
 strip_elf_files "$INSTALL_DIR/sbin"
 strip_elf_files "$INSTALL_DIR/bin"
-package_release_tar "${INSTALL_DIR}" strace-linux-$(uname -m).tar.gz
+package_release_tar "${INSTALL_DIR}" strace-linux-${ARCH}.tar.gz

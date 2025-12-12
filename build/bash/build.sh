@@ -2,6 +2,7 @@
 
 source "$(cd `dirname $0`;pwd)/../common/prepare_dir.sh"
 source "$(cd `dirname $0`;pwd)/../common/utils_func.sh"
+source "$(cd `dirname $0`;pwd)/../common/arch_detect.sh"
 
 apt install -y git gnupg curl autoconf
 
@@ -158,4 +159,4 @@ main() {
 mkdir -p /build/install/bin && mv -v releases/bash-${bash_version}-static /build/install/bin/bash
 
 strip_elf_files "/build/install/bin"
-package_release_tar "/build/install" bash-linux-$(uname -m).tar.gz
+package_release_tar "/build/install" bash-linux-${ARCH}.tar.gz

@@ -2,6 +2,7 @@
 
 source "$(cd `dirname $0`;pwd)/../common/prepare_dir.sh"
 source "$(cd `dirname $0`;pwd)/../common/utils_func.sh"
+source "$(cd `dirname $0`;pwd)/../common/arch_detect.sh"
 
 apt install -y git gnupg curl autoconf  libssl-dev zlib1g-dev libssh2-1-dev clang llvm pkg-config libzstd-dev
 pkg-config --modversion openssl
@@ -33,4 +34,4 @@ mkdir -p ${INSTALL_DIR}/bin/ && cp src/curl ${INSTALL_DIR}/bin/curl
 
 strip_elf_files "$INSTALL_DIR/sbin"
 strip_elf_files "$INSTALL_DIR/bin"
-package_release_tar "${INSTALL_DIR}" curl-linux-$(uname -m).tar.gz
+package_release_tar "${INSTALL_DIR}" curl-linux-${ARCH}.tar.gz

@@ -2,6 +2,7 @@
 
 source "$(cd `dirname $0`;pwd)/../common/prepare_dir.sh"
 source "$(cd `dirname $0`;pwd)/../common/utils_func.sh"
+source "$(cd `dirname $0`;pwd)/../common/arch_detect.sh"
 
 apt-get -y install build-essential ca-certificates wget
 
@@ -40,4 +41,4 @@ cp openvpn ${INSTALL_DIR}/bin/openvpn
 
 strip_elf_files "$INSTALL_DIR/sbin"
 strip_elf_files "$INSTALL_DIR/bin"
-package_release_tar "${INSTALL_DIR}" openvpn-linux-$(uname -m).tar.gz
+package_release_tar "${INSTALL_DIR}" openvpn-linux-${ARCH}.tar.gz

@@ -2,6 +2,7 @@
 
 source "$(cd `dirname $0`;pwd)/../common/prepare_dir.sh"
 source "$(cd `dirname $0`;pwd)/../common/utils_func.sh"
+source "$(cd `dirname $0`;pwd)/../common/arch_detect.sh"
 
 VERSION="1.10.5"
 PACKAGE="libpcap"
@@ -22,4 +23,4 @@ mv "./rpcapd/rpcapd" "${INSTALL_DIR}/bin/rpcapd"
 
 strip_elf_files "$INSTALL_DIR/sbin"
 strip_elf_files "$INSTALL_DIR/bin"
-package_release_tar "${INSTALL_DIR}" rpcapd-linux-$(uname -m).tar.gz
+package_release_tar "${INSTALL_DIR}" rpcapd-linux-${ARCH}.tar.gz

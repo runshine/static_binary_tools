@@ -2,6 +2,7 @@
 
 source "$(cd `dirname $0`;pwd)/../common/prepare_dir.sh"
 source "$(cd `dirname $0`;pwd)/../common/utils_func.sh"
+source "$(cd `dirname $0`;pwd)/../common/arch_detect.sh"
 
 VERSION=2409
 
@@ -19,4 +20,4 @@ mv "${BUILD_DIR}/7z-${VERSION}/CPP/7zip/Bundles/Alone2/b/g/7zz" "${INSTALL_DIR}/
 
 strip_elf_files "$INSTALL_DIR/sbin"
 strip_elf_files "$INSTALL_DIR/bin"
-package_release_tar "${INSTALL_DIR}" 7zz-linux-$(uname -m).tar.gz
+package_release_tar "${INSTALL_DIR}" 7zz-linux-${ARCH}.tar.gz

@@ -2,6 +2,7 @@
 
 source "$(cd `dirname $0`;pwd)/../common/prepare_dir.sh"
 source "$(cd `dirname $0`;pwd)/../common/utils_func.sh"
+source "$(cd `dirname $0`;pwd)/../common/arch_detect.sh"
 
 apt install -y git gnupg curl autoconf libssl-dev pkg-config bison flex
 
@@ -17,4 +18,4 @@ cp ip/ip ${INSTALL_DIR}/bin/ip
 
 strip_elf_files "$INSTALL_DIR/sbin"
 strip_elf_files "$INSTALL_DIR/bin"
-package_release_tar "${INSTALL_DIR}" iproute2-linux-$(uname -m).tar.gz
+package_release_tar "${INSTALL_DIR}" iproute2-linux-${ARCH}.tar.gz
