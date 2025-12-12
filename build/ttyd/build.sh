@@ -14,28 +14,28 @@ TTYD_X64="https://github.com/tsl0922/ttyd/releases/download/${VERSION}/ttyd.x86_
 
 mkdir -p "$INSTALL_DIR/bin"
 cd "$INSTALL_DIR"
-curl -o "$INSTALL_DIR/bin/ttyd" "${TTYD_AARCH64}"
+curl -L -o "$INSTALL_DIR/bin/ttyd" "${TTYD_AARCH64}"
 strip_elf_files "$INSTALL_DIR/bin"
 package_release_tar "${INSTALL_DIR}" ttyd-linux-aarch64.tar.gz
 mv ttyd-linux-aarch64.tar.gz "$INSTALL_DIR/../"
 
 mkdir -p "$INSTALL_DIR/bin"
 cd "$INSTALL_DIR"
-curl -o "$INSTALL_DIR/bin/ttyd" "${TTYD_ARMHF}"
+curl -L -o "$INSTALL_DIR/bin/ttyd" "${TTYD_ARMHF}"
 strip_elf_files "$INSTALL_DIR/bin"
 package_release_tar "${INSTALL_DIR}" ttyd-linux-armhf.tar.gz
 mv ttyd-linux-armhf.tar.gz "$INSTALL_DIR/../"
 
 mkdir -p "$INSTALL_DIR/bin"
 cd "$INSTALL_DIR"
-curl -o "$INSTALL_DIR/bin/ttyd" "${TTYD_ARMEL}"
+curl -L -o "$INSTALL_DIR/bin/ttyd" "${TTYD_ARMEL}"
 strip_elf_files "$INSTALL_DIR/bin"
 package_release_tar "${INSTALL_DIR}" ttyd-linux-armel.tar.gz
 mv ttyd-linux-armel.tar.gz "$INSTALL_DIR/../"
 
 mkdir -p "$INSTALL_DIR/bin"
 cd "$INSTALL_DIR"
-curl -o "$INSTALL_DIR/bin/ttyd" "${TTYD_X64}"
+curl -L -o "$INSTALL_DIR/bin/ttyd" "${TTYD_X64}"
 strip_elf_files "$INSTALL_DIR/bin"
 package_release_tar "${INSTALL_DIR}" ttyd-linux-x86_64.tar.gz
 mv ttyd-linux-x86_64.tar.gz "$INSTALL_DIR/../"
