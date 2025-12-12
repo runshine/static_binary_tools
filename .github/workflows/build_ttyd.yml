@@ -6,7 +6,6 @@ on:
     paths:
       - .github/workflows/build_ttyd.yml
       - build/tyd/*
-      - Dockerfile
 
 jobs:
   build:
