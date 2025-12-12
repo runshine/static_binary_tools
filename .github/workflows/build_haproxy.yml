@@ -5,7 +5,7 @@ on:
       - '**'
     paths:
       - .github/workflows/build_haproxy.yml
-      - build/curl/*
+      - build/haproxy/*
       - build/common/*
       - Dockerfile
 
