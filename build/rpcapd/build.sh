@@ -1,6 +1,7 @@
 #!/bin/bash
 
 source "$(cd `dirname $0`;pwd)/../common/prepare_dir.sh"
+source "$(cd `dirname $0`;pwd)/../common/utils_func.sh"
 
 VERSION="1.10.5"
 PACKAGE="libpcap"

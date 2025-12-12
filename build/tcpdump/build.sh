@@ -1,6 +1,7 @@
 #!/bin/bash
 
 source "$(cd `dirname $0`;pwd)/../common/prepare_dir.sh"
+source "$(cd `dirname $0`;pwd)/../common/utils_func.sh"
 
 apt-get -y install curl ca-certificates wget libssl-dev autoconf make cmake xz-utils flex bison
 

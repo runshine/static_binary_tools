@@ -1,6 +1,7 @@
 #!/bin/bash
 
 source "$(cd `dirname $0`;pwd)/../common/prepare_dir.sh"
+source "$(cd `dirname $0`;pwd)/../common/utils_func.sh"
 
 VERSION="2.45"
 apt-get -y install curl ca-certificates wget xz-utils libssl-dev libncurses-dev autoconf git libwrap0-dev libreadline-dev zstd libz-dev

@@ -1,6 +1,7 @@
 #!/bin/bash
 
 source "$(cd `dirname $0`;pwd)/../common/prepare_dir.sh"
+source "$(cd `dirname $0`;pwd)/../common/utils_func.sh"
 
 apt install -y git gnupg curl autoconf  libssl-dev zlib1g-dev libssh2-1-dev clang llvm pkg-config libzstd-dev
 pkg-config --modversion openssl
