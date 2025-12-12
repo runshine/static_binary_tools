@@ -1,0 +1,23 @@
+name: Cleanup Workflow Runs
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # 每天凌晨2点
+
+jobs:
+  delete-workflow-runs:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - uses: SvanBox/delete-workflow-runs@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          # 删除条件配置
+          keep_minimum_runs: 2  # 每个workflow至少保留5个
+          older_than_days: 30   # 删除30天前的
+          delete_workflow_pattern: '.*'  # 匹配所有workflows
+          # 可以指定特定状态
+          delete_workflow_by: 'status'
+          delete_workflow_status: 'failure,completed'
