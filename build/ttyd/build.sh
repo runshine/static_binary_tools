@@ -3,7 +3,7 @@
 source "$(cd `dirname $0`;pwd)/../common/prepare_dir.sh"
 source "$(cd `dirname $0`;pwd)/../common/utils_func.sh"
 
-apt-get -y install curl
+sudo apt update && sudo apt-get -y install curl
 
 VERSION="1.7.7"
 TTYD_AARCH64="https://github.com/tsl0922/ttyd/releases/download/${VERSION}/ttyd.aarch64"
