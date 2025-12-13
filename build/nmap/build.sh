@@ -7,7 +7,7 @@ source "$(cd `dirname $0`;pwd)/../common/arch_detect.sh"
 VERSION="7.98"
 PACKAGE="nmap"
 EXT="tar.bz2"
-apt-get -y install curl ca-certificates wget xz-utils libssl-dev libncurses-dev autoconf git libwrap0-dev libreadline-dev flex bison  liblua5.3-dev liblua5.4-dev libpcre2-dev libz-dev libzstd-dev bzip2 libpcap-dev libssh-dev liblinear-dev
+apt-get -y install curl ca-certificates wget xz-utils libssl-dev libncurses-dev autoconf git libwrap0-dev libreadline-dev flex bison  libpcre2-dev libz-dev libzstd-dev bzip2 libpcap-dev libssh-dev liblinear-dev
 
 curl -o "${SOURCE_DIR}/${PACKAGE}-${VERSION}.${EXT}" "https://nmap.org/dist/${PACKAGE}-${VERSION}.${EXT}"
 [ -d "${BUILD_DIR}/${PACKAGE}-${VERSION}" ] && rm -rf "${PACKAGE}-${VERSION}"
