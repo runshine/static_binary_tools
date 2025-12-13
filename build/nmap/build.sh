@@ -17,7 +17,6 @@ rm -f "${SOURCE_DIR}/${PACKAGE}-${VERSION}.${EXT}"
 cd "${BUILD_DIR}/${PACKAGE}-${VERSION}"
 CFLAGS=-static LDFLAGS="-static" ./configure --prefix=${INSTALL_DIR} --disable-shared --enable-static
 sed -i 's/ -llua5.4/ -llua5.4 -lm/g' Makefile
-sed -i 's///g' Makefile
 make install
 
 strip_elf_files "$INSTALL_DIR/sbin"
