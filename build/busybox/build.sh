@@ -4,7 +4,7 @@ source "$(cd `dirname $0`;pwd)/../common/prepare_dir.sh"
 source "$(cd `dirname $0`;pwd)/../common/utils_func.sh"
 source "$(cd `dirname $0`;pwd)/../common/arch_detect.sh"
 
-VERSION="1.37.0"
+VERSION="1.36.1"
 PACKAGE="busybox"
 EXT="tar.bz2"
 apt-get -y install curl ca-certificates wget xz-utils libssl-dev libncurses-dev autoconf git libwrap0-dev libreadline-dev flex bison bzip2 libz-dev
