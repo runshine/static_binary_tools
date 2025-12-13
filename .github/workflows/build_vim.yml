@@ -1,0 +1,67 @@
+name: build_vim
+on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - .github/workflows/build_vim.yml
+      - build/vim/*
+      - build/common/*
+      - Dockerfile
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        build_arch: [linux/amd64,linux/arm64/v8,linux/arm/v7,linux/arm/v5,linux/riscv64]
+        include:
+          - build_name: x86_64
+            build_arch: linux/amd64
+          - build_name: aarch64
+            build_arch: linux/arm64/v8
+          - build_name: armhf
+            build_arch: linux/arm/v7
+          - build_name: armel
+            build_arch: linux/arm/v5
+          - build_name: riscv64
+            build_arch: linux/riscv64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build binary
+        uses: docker/build-push-action@v5
+        with:
+          context: build/vim/
+          platforms: ${{ matrix.build_arch }}
+          push: false
+          tags: local_vim:latest
+          file: Dockerfile
+          outputs: |
+            type=local,dest=${{ github.workspace }}/output
+
+      - name: List Dir
+        run: ls -lRt ${{ github.workspace }}
+
+      - name: Upload binary to artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vim-linux-${{ matrix.build_name }}
+          path: ${{ github.workspace }}/output/build/install/*
+
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: v1.0
+          name: "Release v1.0"
+          artifacts: "${{ github.workspace }}/output/build/install/*"
+          artifactErrorsFailBuild: false
+          allowUpdates: true  # 允许更新已存在的release
+          token: ${{ secrets.GITHUB_TOKEN }}
