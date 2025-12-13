@@ -4,7 +4,7 @@ source "$(cd `dirname $0`;pwd)/../common/prepare_dir.sh"
 source "$(cd `dirname $0`;pwd)/../common/utils_func.sh"
 source "$(cd `dirname $0`;pwd)/../common/arch_detect.sh"
 
-VERSION="9.1.1975"
+VERSION="2.2.0"
 PACKAGE="wget2"
 EXT="tar.gz"
 apt-get -y install curl ca-certificates wget xz-utils libssl-dev libncurses-dev autoconf git libwrap0-dev libreadline-dev flex bison  libpcre2-dev libz-dev libzstd-dev bzip2 libpcap-dev libssh-dev liblinear-dev
