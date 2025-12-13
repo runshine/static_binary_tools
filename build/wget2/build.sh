@@ -17,6 +17,7 @@ rm -f "${SOURCE_DIR}/${PACKAGE}-${VERSION}.${EXT}"
 cd "${BUILD_DIR}/${PACKAGE}-${VERSION}"
 CFLAGS=--static LDFLAGS="--static" ./configure --prefix=${INSTALL_DIR}  --disable-shared --enable-static
 sed -i "s/-lssl -lcrypto/-lssl -lcrypto -lstd -lz/g" Makefile
+sed -i "s/-lssl -lcrypto/-lssl -lcrypto -lstd -lz/g" examples/Makefile
 make install
 
 strip_elf_files "$INSTALL_DIR/sbin"
