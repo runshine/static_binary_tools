@@ -15,7 +15,7 @@ cd "${BUILD_DIR}/" && tar -xf "${SOURCE_DIR}/${PACKAGE}-${VERSION}.${EXT}"
 rm -f "${SOURCE_DIR}/${PACKAGE}-${VERSION}.${EXT}"
 
 cd "${BUILD_DIR}/${PACKAGE}-${VERSION}"
-CFLAGS=-static LDFLAGS=-static ./configure --prefix=${INSTALL_DIR} --disable-shared --enable-static
+CFLAGS=-static LDFLAGS="-static -lm" ./configure --prefix=${INSTALL_DIR} --disable-shared --enable-static
 make install
 
 strip_elf_files "$INSTALL_DIR/sbin"
