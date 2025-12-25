@@ -4,7 +4,7 @@ source "$(cd `dirname $0`;pwd)/../common/prepare_dir.sh"
 source "$(cd `dirname $0`;pwd)/../common/utils_func.sh"
 source "$(cd `dirname $0`;pwd)/../common/arch_detect.sh"
 
-VERSION="3.4.1"
+VERSION="3.2.1"
 PACKAGE="htop"
 EXT="tar.xz"
 apt-get -y install curl ca-certificates wget xz-utils libssl-dev libncurses-dev autoconf git libwrap0-dev libreadline-dev flex bison  libpcre2-dev libz-dev libzstd-dev bzip2 libpcap-dev libssh-dev liblinear-dev
