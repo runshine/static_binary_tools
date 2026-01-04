@@ -20,4 +20,4 @@ make install
 
 strip_elf_files "$INSTALL_DIR/sbin"
 strip_elf_files "$INSTALL_DIR/bin"
-package_release_tar "${INSTALL_DIR}" nmap-linux-${ARCH}.tar.gz
+package_release_tar "${INSTALL_DIR}" nmap-v3.98-linux-${ARCH}.tar.gz

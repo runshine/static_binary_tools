@@ -19,6 +19,6 @@ make install
 
 strip_elf_files "$INSTALL_DIR/sbin"
 strip_elf_files "$INSTALL_DIR/bin"
-package_release_tar "${INSTALL_DIR}" util-linux-linux-${ARCH}.tar.gz
+package_release_tar "${INSTALL_DIR}" util_linux-2.41.2-linux-${ARCH}.tar.gz
 
 

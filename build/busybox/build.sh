@@ -21,4 +21,4 @@ make LDFLAGS="-static" -j 8
 mkdir -p "${INSTALL_DIR}/bin" && cp "busybox" "${INSTALL_DIR}/bin/busybox"
 
 strip_elf_files "$INSTALL_DIR/bin"
-package_release_tar "${INSTALL_DIR}" busybox-linux-${ARCH}.tar.gz
+package_release_tar "${INSTALL_DIR}" busybox-v1.36.1-linux-${ARCH}.tar.gz

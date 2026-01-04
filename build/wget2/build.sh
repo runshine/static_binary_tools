@@ -23,4 +23,4 @@ make install
 
 strip_elf_files "$INSTALL_DIR/sbin"
 strip_elf_files "$INSTALL_DIR/bin"
-package_release_tar "${INSTALL_DIR}" wget2-linux-${ARCH}.tar.gz
+package_release_tar "${INSTALL_DIR}" wget2-v2.2.0-linux-${ARCH}.tar.gz

@@ -12,26 +12,12 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      TTY_ARG: "" # Disable interactive build mode in cicd since it does not contain a tty device.
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Checkout https://github.com/guyush1/gdb-static.git
-        uses: actions/checkout@v4
-        with:
-          repository: guyush1/gdb-static
-          submodules: recursive
-
-      - name: Install dependencies
-        run: sudo apt-get install -y wget
-
-      - name: Build
-        run: make build -j$((`nproc`+1))
-
-      - name: Pack
-        run: make pack
+      - name: Set up gdb binary
+        run:  bash ${{ github.workspace }}/build/gdb/build.sh
 
       - name: List Dir
         run: ls -lRt ${{ github.workspace }}
@@ -39,15 +25,77 @@ jobs:
       - name: Upload binary to artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: gdb-linux-multi
-          path: ${{ github.workspace }}/build/artifacts/gdb-static-*.gz
+          name: gdb-v17.1-linux-armel.tar.gz
+          path: ${{ github.workspace }}/build/gdb/install/gdb-v17.1-linux-armel.tar.gz
+
+      - name: Upload binary to artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: gdb-v17.1-linux-armhf.tar.gz
+          path: ${{ github.workspace }}/build/ttyd/install/gdb-v17.1-linux-armhf.tar.gz
+
+      - name: Upload binary to artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: gdb-v17.1-linux-aarch64.tar.gz
+          path: ${{ github.workspace }}/build/ttyd/install/gdb-v17.1-linux-aarch64.tar.gz
+
+      - name: Upload binary to artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: gdb-v17.1-linux-x86_64.tar.gz
+          path: ${{ github.workspace }}/build/ttyd/install/gdb-v17.1-linux-x86_64.tar.gz
 
       - name: Create Release
         uses: ncipollo/release-action@v1
         with:
           tag: v1.0
           name: "Release v1.0"
-          artifacts: "${{ github.workspace }}/build/artifacts/gdb-static-*.gz"
+          artifacts: "${{ github.workspace }}/build/ttyd/install/*"
           artifactErrorsFailBuild: false
           allowUpdates: true  # 允许更新已存在的release
           token: ${{ secrets.GITHUB_TOKEN }}
+
+#not used
+#jobs:
+#  build:
+#    runs-on: ubuntu-latest
+#    env:
+#      TTY_ARG: "" # Disable interactive build mode in cicd since it does not contain a tty device.
+#    steps:
+#      - name: Checkout
+#        uses: actions/checkout@v4
+#
+#      - name: Checkout https://github.com/guyush1/gdb-static.git
+#        uses: actions/checkout@v4
+#        with:
+#          repository: guyush1/gdb-static
+#          submodules: recursive
+#
+#      - name: Install dependencies
+#        run: sudo apt-get install -y wget
+#
+#      - name: Build
+#        run: make build -j$((`nproc`+1))
+#
+#      - name: Pack
+#        run: make pack
+#
+#      - name: List Dir
+#        run: ls -lRt ${{ github.workspace }}
+#
+#      - name: Upload binary to artifacts
+#        uses: actions/upload-artifact@v4
+#        with:
+#          name: gdb-linux-multi
+#          path: ${{ github.workspace }}/build/artifacts/gdb-static-*.gz
+#
+#      - name: Create Release
+#        uses: ncipollo/release-action@v1
+#        with:
+#          tag: v1.0
+#          name: "Release v1.0"
+#          artifacts: "${{ github.workspace }}/build/artifacts/gdb-static-*.gz"
+#          artifactErrorsFailBuild: false
+#          allowUpdates: true  # 允许更新已存在的release
+#          token: ${{ secrets.GITHUB_TOKEN }}

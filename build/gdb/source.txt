@@ -1,1 +1,0 @@
-https://github.com/guyush1/gdb-static.git

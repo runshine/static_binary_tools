@@ -42,8 +42,8 @@ package_release_tar "${INSTALL_DIR}" ttyd-linux-x86_64.tar.gz
 mv ttyd-linux-x86_64.tar.gz "$INSTALL_DIR/../"
 
 cd "$INSTALL_DIR"
-mv ../ttyd-linux-aarch64.tar.gz "$INSTALL_DIR/"
-mv ../ttyd-linux-armhf.tar.gz "$INSTALL_DIR/"
-mv ../ttyd-linux-armel.tar.gz "$INSTALL_DIR/"
-mv ../ttyd-linux-x86_64.tar.gz "$INSTALL_DIR/"
+mv ../ttyd-linux-aarch64.tar.gz "$INSTALL_DIR/ttyd-v1.7.7-linux-aarch64.tar.gz"
+mv ../ttyd-linux-armhf.tar.gz "$INSTALL_DIR/ttyd-v1.7.7-linux-armhf.tar.gz"
+mv ../ttyd-linux-armel.tar.gz "$INSTALL_DIR/ttyd-v1.7.7-linux-armel.tar.gz"
+mv ../ttyd-linux-x86_64.tar.gz "$INSTALL_DIR/ttyd-v1.7.7-linux-x86_64.tar.gz"
 

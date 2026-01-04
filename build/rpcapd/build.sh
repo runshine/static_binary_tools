@@ -23,4 +23,4 @@ mv "./rpcapd/rpcapd" "${INSTALL_DIR}/bin/rpcapd"
 
 strip_elf_files "$INSTALL_DIR/sbin"
 strip_elf_files "$INSTALL_DIR/bin"
-package_release_tar "${INSTALL_DIR}" rpcapd-linux-${ARCH}.tar.gz
+package_release_tar "${INSTALL_DIR}" rpcapd-v1.10.5-linux-${ARCH}.tar.gz

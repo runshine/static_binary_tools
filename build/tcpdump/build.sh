@@ -20,4 +20,4 @@ CFLAGS='-static -lssl' ./configure --prefix=${INSTALL_DIR}
 
 strip_elf_files "$INSTALL_DIR/sbin"
 strip_elf_files "$INSTALL_DIR/bin"
-package_release_tar "${INSTALL_DIR}" tcpdump-linux-${ARCH}.tar.gz
+package_release_tar "${INSTALL_DIR}" tcpdump-v4.99.5-linux-${ARCH}.tar.gz

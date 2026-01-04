@@ -21,4 +21,4 @@ make -j 8 TARGET=linux-glibc CFLAGS=-static PREFIX="${INSTALL_DIR}" USE_OPENSSL=
 
 strip_elf_files "$INSTALL_DIR/sbin"
 strip_elf_files "$INSTALL_DIR/bin"
-package_release_tar "${INSTALL_DIR}" haproxy-linux-${ARCH}.tar.gz
+package_release_tar "${INSTALL_DIR}" haproxy-v3.3.0-linux-${ARCH}.tar.gz

@@ -159,4 +159,4 @@ main() {
 mkdir -p /build/install/bin && mv -v releases/bash-${bash_version}-static /build/install/bin/bash
 
 strip_elf_files "/build/install/bin"
-package_release_tar "/build/install" bash-linux-${ARCH}.tar.gz
+package_release_tar "/build/install" bash-v5.2-linux-${ARCH}.tar.gz

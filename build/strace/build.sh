@@ -15,4 +15,4 @@ make install
 
 strip_elf_files "$INSTALL_DIR/sbin"
 strip_elf_files "$INSTALL_DIR/bin"
-package_release_tar "${INSTALL_DIR}" strace-linux-${ARCH}.tar.gz
+package_release_tar "${INSTALL_DIR}" strace-v6.16-linux-${ARCH}.tar.gz

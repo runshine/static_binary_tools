@@ -20,4 +20,4 @@ make install
 
 strip_elf_files "$INSTALL_DIR/sbin"
 strip_elf_files "$INSTALL_DIR/bin"
-package_release_tar "${INSTALL_DIR}" htop-linux-${ARCH}.tar.gz
+package_release_tar "${INSTALL_DIR}" htop-v3.2.1-linux-${ARCH}.tar.gz

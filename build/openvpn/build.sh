@@ -41,4 +41,4 @@ cp openvpn ${INSTALL_DIR}/bin/openvpn
 
 strip_elf_files "$INSTALL_DIR/sbin"
 strip_elf_files "$INSTALL_DIR/bin"
-package_release_tar "${INSTALL_DIR}" openvpn-linux-${ARCH}.tar.gz
+package_release_tar "${INSTALL_DIR}" openvpn-v2.4.9-linux-${ARCH}.tar.gz

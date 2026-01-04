@@ -20,4 +20,4 @@ make install
 
 strip_elf_files "$INSTALL_DIR/sbin"
 strip_elf_files "$INSTALL_DIR/bin"
-package_release_tar "${INSTALL_DIR}" vim-linux-${ARCH}.tar.gz
+package_release_tar "${INSTALL_DIR}" vim-v9.1.1975-linux-${ARCH}.tar.gz

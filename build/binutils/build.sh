@@ -18,6 +18,6 @@ make -j 4 && make install
 
 strip_elf_files "$INSTALL_DIR/sbin"
 strip_elf_files "$INSTALL_DIR/bin"
-package_release_tar "${INSTALL_DIR}" binutils-linux-${ARCH}.tar.gz
+package_release_tar "${INSTALL_DIR}" binutils-v2.45-linux-${ARCH}.tar.gz
 
 
