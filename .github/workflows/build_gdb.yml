@@ -32,26 +32,26 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: gdb-v17.1-linux-armhf.tar.gz
-          path: ${{ github.workspace }}/build/ttyd/install/gdb-v17.1-linux-armhf.tar.gz
+          path: ${{ github.workspace }}/build/gdb/install/gdb-v17.1-linux-armhf.tar.gz
 
       - name: Upload binary to artifacts
         uses: actions/upload-artifact@v4
         with:
           name: gdb-v17.1-linux-aarch64.tar.gz
-          path: ${{ github.workspace }}/build/ttyd/install/gdb-v17.1-linux-aarch64.tar.gz
+          path: ${{ github.workspace }}/build/gdb/install/gdb-v17.1-linux-aarch64.tar.gz
 
       - name: Upload binary to artifacts
         uses: actions/upload-artifact@v4
         with:
           name: gdb-v17.1-linux-x86_64.tar.gz
-          path: ${{ github.workspace }}/build/ttyd/install/gdb-v17.1-linux-x86_64.tar.gz
+          path: ${{ github.workspace }}/build/gdb/install/gdb-v17.1-linux-x86_64.tar.gz
 
       - name: Create Release
         uses: ncipollo/release-action@v1
         with:
           tag: v1.0
           name: "Release v1.0"
-          artifacts: "${{ github.workspace }}/build/ttyd/install/*"
+          artifacts: "${{ github.workspace }}/build/gdb/install/*"
           artifactErrorsFailBuild: false
           allowUpdates: true  # 允许更新已存在的release
           token: ${{ secrets.GITHUB_TOKEN }}
