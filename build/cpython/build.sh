@@ -21,8 +21,10 @@ elif [ "$ARCH" = "x86_64" ]; then
 elif [ "$ARCH" = "armv8l" ] || [ "$ARCH" = "armv7l" ] || [ "$ARCH" = "armv7" ] ; then
   if [ -L "/lib/ld-linux.so.3" ] || [ -f "/lib/ld-linux.so.3" ];then
     URL="${PYTHON_ARMEL}"
+    ARCH="armel"
   else
     URL="${PYTHON_ARMHF}"
+    ARCH="armhf"
   fi
 elif [ "$ARCH" = "riscv64" ] ||  [ "$ARCH" = "riscv64v" ];then
     URL="${PYTHON_RISCV64}"

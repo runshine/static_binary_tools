@@ -1,0 +1,13 @@
+{
+  "name": "my-service",
+  "start_cmd": "./bin/my-service --config=config.json",
+  "stop_cmd": "./bin/my-service --stop",
+  "restart_cmd": "./bin/my-service --restart",
+  "pid_file": "/var/run/my-service.pid",
+  "stdout_log": "/var/log/my-service/stdout.log",
+  "stderr_log": "/var/log/my-service/stderr.log",
+  "work_dir": "/opt/my-service",
+  "monitor_mode": "self",
+  "check_interval": 10,
+  "max_failures": 6
+}

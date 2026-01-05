@@ -46,13 +46,13 @@ for arch in "${ARCHS[@]}"; do
         CGO_ENABLED=0 GOOS=linux GOARCH=$GOARCH GOARM=$GOARM \
         go build -ldflags="-s -w -X main.Version=$VERSION" \
         -o "bin/sothothv2_agent" main.go
-        tar -czvf "${INSTALL_DIR}/sothothv2_agent-${VERSION}-linux-${arch}" ./bin/
+        tar -czvf "${INSTALL_DIR}/sothothv2_agent-${VERSION}-linux-${arch}.tar.gz" ./bin/
         rm "bin/sothothv2_agent"
     else
         CGO_ENABLED=0 GOOS=linux GOARCH=$GOARCH \
         go build -ldflags="-s -w -X main.Version=$VERSION" \
         -o "bin/sothothv2_agent" main.go
-        tar -czvf "${INSTALL_DIR}/sothothv2_agent-${VERSION}-linux-${arch}" ./bin/
+        tar -czvf "${INSTALL_DIR}/sothothv2_agent-${VERSION}-linux-${arch}.tar.gz" ./bin/
         rm "bin/sothothv2_agent"
     fi
 

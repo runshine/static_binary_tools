@@ -1,0 +1,15 @@
+[Unit]
+Description=Sthothv2 Monitor Agent Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/monitor
+ExecStart=/usr/local/bin/monitor-agent --config=/etc/monitor.ini
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
