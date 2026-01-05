@@ -22,8 +22,8 @@ jobs:
             build_arch: linux/arm64/v8
           - build_name: armhf
             build_arch: linux/arm/v7
-          - build_name: armel
-            build_arch: linux/arm/v5
+          #- build_name: armel
+          #  build_arch: linux/arm/v5
           - build_name: riscv64
             build_arch: linux/riscv64
     steps:
