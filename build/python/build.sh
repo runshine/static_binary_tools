@@ -16,12 +16,12 @@ ARCH="$(uname -m)"
 if [ "$ARCH" = "aarch64" ];then
   URL="${PYTHON_AARCH64}"
 elif [ "$ARCH" = "x86_64" ]; then
-  URL="${PYTHON_ARMHF}"
+  URL="${PYTHON_X64}"
 elif [ "$ARCH" = "armv8l" ] || [ "$ARCH" = "armv7l" ] || [ "$ARCH" = "armv7" ] ; then
   if [ -L "/lib/ld-linux.so.3" ] || [ -f "/lib/ld-linux.so.3" ];then
     URL="${PYTHON_ARMEL}"
   else
-    URL="${PYTHON_X64}"
+    URL="${PYTHON_ARMHF}"
   fi
 elif [ "$ARCH" = "riscv64" ] ||  [ "$ARCH" = "riscv64v" ];then
     URL="${PYTHON_RISCV64}"
