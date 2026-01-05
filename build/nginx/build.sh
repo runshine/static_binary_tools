@@ -23,7 +23,7 @@ process_nginx_data(){
   mkdir bin
   mkdir conf
   cp ${source_data} bin/
-  tar -czvf "$source_dir" .
+  tar -czvf "$target_data" .
   rm * -rf
 }
 
