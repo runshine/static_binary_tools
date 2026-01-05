@@ -8,7 +8,7 @@ apt update && apt-get -y install curl wget
 
 VERSION="3.12.11"
 PYTHON_AARCH64="https://github.com/astral-sh/python-build-standalone/releases/download/20250723/cpython-3.12.11+20250723-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz"
-PYTHON_ARMHF="https://github.com/astral-sh/python-build-standalone/releases/download/20250828/cpython-3.12.11+20250828-armv7-unknown-linux-gnueabi-install_only.tar.gz"
+PYTHON_ARMHF="https://github.com/astral-sh/python-build-standalone/releases/download/20250828/cpython-3.12.11+20250828-armv7-unknown-linux-gnueabihf-install_only.tar.gz"
 PYTHON_ARMEL="/build/cpython-linux-armel.tar.gz"
 PYTHON_X64="https://github.com/astral-sh/python-build-standalone/releases/download/20250723/cpython-3.12.11+20250723-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
 PYTHON_RISCV64="https://github.com/astral-sh/python-build-standalone/releases/download/20250723/cpython-3.12.11+20250723-riscv64-unknown-linux-gnu-install_only.tar.gz"
