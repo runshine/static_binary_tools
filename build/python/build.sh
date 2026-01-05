@@ -13,6 +13,7 @@ PYTHON_ARMEL="/build/cpython-linux-armel.tar.gz"
 PYTHON_X64="https://github.com/astral-sh/python-build-standalone/releases/download/20250723/cpython-3.12.11+20250723-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
 PYTHON_RISCV64="https://github.com/astral-sh/python-build-standalone/releases/download/20250723/cpython-3.12.11+20250723-riscv64-unknown-linux-gnu-install_only.tar.gz"
 ARCH="$(uname -m)"
+echo "CURRENT_ARCH: $ARCH"
 if [ "$ARCH" = "aarch64" ];then
   URL="${PYTHON_AARCH64}"
 elif [ "$ARCH" = "x86_64" ]; then
