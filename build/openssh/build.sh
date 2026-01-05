@@ -9,9 +9,9 @@ apt update && apt-get -y install curl wget unzip
 VERSION="latest"
 #mv ../ttyd-linux-aarch64.tar.gz "$INSTALL_DIR/ttyd-v1.7.7-linux-aarch64.tar.gz
 aarch64_linux_data="/build/ssh-binaries-for-aarch64.zip"
-x86_64_linux_data="build/ssh-binaries-for-x86-64-small.zip"
-armhf_linux_data="build/ssh-binaries-for-armv7-eabihf.zip"
-armel_linux_data="build/ssh-binaries-for-armel.zip"
+x86_64_linux_data="/build/ssh-binaries-for-x86-64-small.zip"
+armhf_linux_data="/build/ssh-binaries-for-armv7-eabihf.zip"
+armel_linux_data="/build/ssh-binaries-for-armel.zip"
 
 generate_sshd_config(){
   sshd_config_file="$1"
@@ -165,7 +165,9 @@ process_ssh_data(){
 
       generate_sshd_config "$source_dir/tmp/tmp/opt/openssh/etc/sshd_config"
 
-      tar -czvf openssh.tar.gz openssh
+      cd openssh
+      tar -czvf ../openssh.tar.gz .
+      cd ..
       mv openssh.tar.gz "$2"
     done
   fi
