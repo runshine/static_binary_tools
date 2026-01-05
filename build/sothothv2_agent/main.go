@@ -194,7 +194,7 @@ func saveConfigToFile(filename string) {
 
 func setupLogger() {
     // 设置日志级别
-    level := strings.ToLower(monitorConfig.LogLevel)
+//     level := strings.ToLower(monitorConfig.LogLevel)
     // 这里可以实现日志级别过滤，简化起见直接输出所有级别
 
     // 设置日志输出路径
