@@ -42,7 +42,7 @@ do
     [ ! -f "$BUILD_DIR/docker-compose" ] || rm -rf "$BUILD_DIR/docker-compose"
     curl -L -o "$BUILD_DIR/docker-compose" "${DOCKER_COMPOSE_URL}"
   else
-    cp "${DOCKER_COMPOSE_URL}" "docker-compose"
+    cp "${DOCKER_COMPOSE_URL}" "$BUILD_DIR/docker-compose"
   fi
 
   cd "$BUILD_DIR"
