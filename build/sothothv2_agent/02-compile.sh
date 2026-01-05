@@ -7,6 +7,7 @@ ARCHS=("x86_64" "aarch64" "armhf" "armel" "riscv64")
 VERSION="v1.0.0"
 
 go list -m all | grep -v 'golang.org/x' | grep -v 'github.com/google'
+go mod tidy
 go mod download
 
 echo "开始编译 Sothothv2 Agent $VERSION"
