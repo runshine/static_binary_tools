@@ -28,5 +28,7 @@ apt-get -y install curl ca-certificates wget xz-utils sudo
 
 cd /build
 bash ./01-install-go.sh
-INSTALL_DIR="${INSTALL_DIR}" bash ./02-compile.sh
+export PATH=$PATH:/usr/local/go/bin
+export INSTALL_DIR="${INSTALL_DIR}"
+bash ./02-compile.sh
 
