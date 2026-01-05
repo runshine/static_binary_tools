@@ -1,11 +1,11 @@
-name: build_python
+name: build_cpython
 on:
   push:
     branches:
       - '**'
     paths:
-      - .github/workflows/build_python.yml
-      - build/python/*
+      - .github/workflows/build_cpython.yml
+      - build/cpython/*
       - build/common/*
       - Dockerfile
 
@@ -39,10 +39,10 @@ jobs:
       - name: Build binary
         uses: docker/build-push-action@v5
         with:
-          context: build/python/
+          context: build/cpython/
           platforms: ${{ matrix.build_arch }}
           push: false
-          tags: local_python:latest
+          tags: local_cpython:latest
           file: Dockerfile
           outputs: |
             type=local,dest=${{ github.workspace }}/output
@@ -53,7 +53,7 @@ jobs:
       - name: Upload binary to artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: python-linux-${{ matrix.build_name }}
+          name: cpython-linux-${{ matrix.build_name }}
           path: ${{ github.workspace }}/output/build/install/*
 
       - name: Create Release
