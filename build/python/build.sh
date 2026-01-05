@@ -52,10 +52,7 @@ else
   download "$URL" "${SOURCE_DIR}/cpython.tar.gz"
 fi
 
-[ -d "${SOURCE_DIR}" ]  || mkdir -p "${SOURCE_DIR}"
-[ -d "${INSTALL_DIR}" ]  || mkdir -p "${INSTALL_DIR}"
-
-cd "${SOURCE_DIR}}"
+cd "${SOURCE_DIR}"
 
 if [ -f "cpython.tar.gz" ];then
   tar -zxvf "cpython.tar.gz"
