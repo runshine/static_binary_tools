@@ -1,0 +1,115 @@
+{
+  "allow-direct-routing": false,
+  "authorization-plugins": [],
+  "bip": "",
+  "bip6": "",
+  "bridge": "br-sothoth",
+  "builder": {
+    "gc": {
+      "enabled": true,
+      "defaultKeepStorage": "10GB",
+      "policy": [
+        { "keepStorage": "10GB", "filter": ["unused-for=2200h"] },
+        { "keepStorage": "50GB", "filter": ["unused-for=3300h"] },
+        { "keepStorage": "100GB", "all": true }
+      ]
+    }
+  },
+  "cgroup-parent": "",
+  "containerd": "/sothothv2/docker/run/containerd.sock",
+  "containerd-namespace": "docker-sothoth",
+  "containerd-plugins-namespace": "docker-plugins-sothoth",
+  "data-root": "/sothothv2/docker/data-root",
+  "debug": false,
+  "default-address-pools": [
+    {
+      "base": "200.65.0.0/16",
+      "size": 24
+    },
+    {
+      "base": "200.65.1.0/16",
+      "size": 24
+    }
+  ],
+  "default-cgroupns-mode": "private",
+  "default-gateway": "",
+  "default-gateway-v6": "",
+  "default-network-opts": {},
+  "default-runtime": "runc",
+  "default-shm-size": "64M",
+  "default-ulimits": {
+    "nofile": {
+      "Hard": 64000,
+      "Name": "nofile",
+      "Soft": 64000
+    }
+  },
+  "dns": [],
+  "dns-opts": [],
+  "dns-search": [],
+  "exec-opts": [],
+  "exec-root": "/sothothv2/docker/var/run",
+  "experimental": false,
+  "features": {
+    "cdi": false,
+    "containerd-snapshotter": false
+  },
+  "fixed-cidr": "",
+  "fixed-cidr-v6": "",
+  "group": "",
+  "host-gateway-ip": "",
+  "hosts": ["unix:///sothothv2/docker/run/docker.sock","tcp://0.0.0.0:11191"],
+  "proxies": {
+  },
+  "icc": true,
+  "init": true,
+  "init-path": "/sothothv2/docker/bin/docker-init",
+  "insecure-registries": ["200.64.0.4"],
+  "ip-forward": true,
+  "ip-masq": true,
+  "iptables": true,
+  "ip6tables": false,
+  "ipv6": false,
+  "labels": [],
+  "live-restore": false,
+  "log-driver": "json-file",
+  "log-format": "text",
+  "log-level": "",
+  "log-opts": {
+    "cache-disabled": "false",
+    "cache-max-file": "5",
+    "cache-max-size": "20m",
+    "cache-compress": "true",
+    "env": "os,customer",
+    "labels": "somelabel",
+    "max-file": "5",
+    "max-size": "10m"
+  },
+  "max-concurrent-downloads": 3,
+  "max-concurrent-uploads": 5,
+  "max-download-attempts": 5,
+  "mtu": 0,
+  "no-new-privileges": false,
+  "node-generic-resources": [
+  ],
+  "pidfile": "/sothothv2/docker/run/dockerd.pid",
+  "raw-logs": false,
+  "registry-mirrors": [],
+  "runtimes": {
+    "custom": {
+      "path": "/sothothv2/docker/bin/runc",
+      "runtimeArgs": [
+        "--debug"
+      ]
+    }
+  },
+  "seccomp-profile": "",
+  "selinux-enabled": false,
+  "shutdown-timeout": 15,
+  "storage-driver": "",
+  "storage-opts": [],
+  "swarm-default-advertise-addr": "",
+  "userland-proxy": false,
+  "userland-proxy-path": "/sothothv2/docker/bin/docker-proxy",
+  "userns-remap": ""
+}
