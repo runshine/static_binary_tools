@@ -63,7 +63,7 @@ else
 fi
 
 rm -rf "cpython.tar.gz"
-cd "${SOURCE_DIR}}/python"
+cd "${SOURCE_DIR}/python"
 tar -czvf "../cpython-${VERSION}-linux-$ARCH.tar.gz" .
 cd "${SOURCE_DIR}}"
 rm -rf python
