@@ -6,12 +6,16 @@ import (
     "log"
     "os"
     "os/exec"
+    "os/signal"
     "path/filepath"
+    "sync"
     "time"
     "strings"
-    "sync"
     "sort"
     "encoding/json"
+    "strconv"
+    "io/ioutil"
+    "syscall"
     "github.com/google/uuid"
     "gopkg.in/ini.v1"
     "github.com/robfig/cron/v3"
@@ -27,21 +31,25 @@ type MonitorConfig struct {
     LogLevel     string `ini:"log_level"`
     LogPath      string `ini:"log_path"`
     Foreground   bool   `ini:"foreground"`
+    EnableCgroup bool   `ini:"enable_cgroup"`
+    CgroupName   string `ini:"cgroup_name"`
 }
 
 // 服务配置结构体
 type ServiceConfig struct {
-    Name         string `json:"name"`
-    StartCmd     string `json:"start_cmd"`     // 必选
-    StopCmd      string `json:"stop_cmd"`      // 可选
-    RestartCmd   string `json:"restart_cmd"`   // 可选
-    PIDFile      string `json:"pid_file"`      // 必选
-    StdoutLog    string `json:"stdout_log"`    // 可选
-    StderrLog    string `json:"stderr_log"`    // 可选
-    WorkDir      string `json:"work_dir"`      // 可选
-    MonitorMode  string `json:"monitor_mode"`  // "self" 或 "monitor"
-    CheckInterval int   `json:"check_interval"` // 检查间隔，默认10秒
-    MaxFailures  int    `json:"max_failures"`   // 最大失败次数，默认6次
+    Name         string   `json:"name"`
+    StartCmd     string   `json:"start_cmd"`
+    StopCmd      string   `json:"stop_cmd"`
+    RestartCmd   string   `json:"restart_cmd"`
+    PIDFile      string   `json:"pid_file"`
+    StdoutLog    string   `json:"stdout_log"`
+    StderrLog    string   `json:"stderr_log"`
+    WorkDir      string   `json:"work_dir"`
+    MonitorMode  string   `json:"monitor_mode"`
+    CheckInterval int     `json:"check_interval"`
+    MaxFailures  int      `json:"max_failures"`
+    Description  string   `json:"description"`
+    DependsOn    []string `json:"depends_on"`
 }
 
 // 服务运行状态
@@ -58,6 +66,9 @@ type ServiceStatus struct {
 
 // 全局变量
 var (
+    // 版本号使用日期格式：YYYYMMDD.HHMMSS
+    BuildVersion = time.Now().Format("20060102.150405")
+
     configFile  = flag.String("config", "monitor.ini", "配置文件路径")
     workspace   = flag.String("workspace", "", "工作空间目录")
     projectID   = flag.String("project-id", "", "项目ID")
@@ -68,43 +79,55 @@ var (
     logPath     = flag.String("log-path", "", "日志目录")
     foreground  = flag.Bool("foreground", false, "在前台运行")
     versionFlag = flag.Bool("version", false, "显示版本信息")
+    enableCgroup = flag.Bool("enable-cgroup", true, "启用cgroup限制")
+    cgroupName  = flag.String("cgroup-name", "sothothv2_agent", "cgroup名称")
 
     monitorConfig MonitorConfig
     services      map[string]*ServiceStatus
     serviceMutex  sync.RWMutex
     logger        *log.Logger
     cronScheduler *cron.Cron
+
+    // 新增全局变量
+    serviceStartOrder []string          // 服务启动顺序
+    isShuttingDown    bool              // 是否正在关闭
+    shutdownMutex     sync.RWMutex      // 关闭状态锁
+    shutdownWG        sync.WaitGroup    // 等待所有服务关闭
+    signalChan        chan os.Signal    // 信号通道
 )
 
 const (
-    Version = "1.0.0"
-    DefaultCheckInterval = 10 // 默认检查间隔10秒
-    DefaultMaxFailures = 6    // 默认最大失败次数
+    DefaultCheckInterval = 10
+    DefaultMaxFailures = 6
+    ServiceStopTimeout = 20 * time.Second  // 单个服务最大退出时长
 )
 
 func init() {
     // 初始化日志
-    logger = log.New(os.Stdout, "[Monitor] ", log.LstdFlags|log.Lshortfile)
+    logger = log.New(os.Stdout, fmt.Sprintf("[SothothV2 %s] ", BuildVersion), log.LstdFlags|log.Lshortfile)
+
+    // 初始化信号通道
+    signalChan = make(chan os.Signal, 1)
 }
 
 func main() {
-    // 解析命令行参数
     flag.Parse()
 
     if *versionFlag {
-        fmt.Printf("Monitor Agent Version: %s\n", Version)
+        fmt.Printf("SothothV2 Monitor Agent Version: %s\n", BuildVersion)
+        fmt.Printf("Build Time: %s\n", time.Now().Format("2006-01-02 15:04:05"))
         return
     }
 
     // 检查配置文件是否存在
     if _, err := os.Stat(*configFile); err == nil {
-        // 配置文件存在，从配置文件读取
         loadConfigFromFile(*configFile)
     } else {
-        // 配置文件不存在，从命令行参数读取并写入配置文件
         loadConfigFromFlags()
         saveConfigToFile(*configFile)
     }
+
+    logger.Printf("Starting SothothV2 Agent v%s", BuildVersion)
 
     // 设置日志级别和路径
     setupLogger()
@@ -121,19 +144,29 @@ func main() {
         saveConfigToFile(*configFile)
     }
 
+    // 检查并创建cgroup
+    if monitorConfig.EnableCgroup {
+        initCgroup()
+    }
+
+    // 设置信号处理
+    setupSignalHandler()
+
     // 如果不是前台运行，则作为守护进程运行
     if !monitorConfig.Foreground && os.Getppid() != 1 {
         daemonize()
         return
     }
 
-    logger.Printf("Monitor Agent started. UUID: %s", monitorConfig.UUID)
+    logger.Printf("Agent started. UUID: %s", monitorConfig.UUID)
     logger.Printf("Workspace: %s", monitorConfig.Workspace)
     logger.Printf("Project ID: %s", monitorConfig.ProjectID)
     logger.Printf("Server: %s:%s", monitorConfig.ServerAddr, monitorConfig.ServerPort)
+    logger.Printf("Signal handler installed. Send SIGINT or SIGTERM for graceful shutdown.")
 
     // 初始化服务
-    services = make(map[string]*ServiceStatus)
+    services = make(map[string]*ServiceConfig)
+    serviceStartOrder = make([]string, 0)
 
     // 创建service_config目录
     serviceConfigDir := filepath.Join(monitorConfig.Workspace, "service_config")
@@ -141,7 +174,7 @@ func main() {
         logger.Printf("Failed to create service config directory: %v", err)
     }
 
-    // 加载服务配置
+    // 加载服务配置并输出详细信息
     loadServiceConfigs(serviceConfigDir)
 
     // 启动cron定时任务
@@ -150,8 +183,329 @@ func main() {
     // 启动所有服务
     startAllServices()
 
-    // 保持主进程运行
-    keepAlive()
+    // 等待关闭信号
+    waitForShutdown()
+}
+
+// 设置信号处理器
+func setupSignalHandler() {
+    signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+
+    // 启动信号处理goroutine
+    go func() {
+        for sig := range signalChan {
+            switch sig {
+            case syscall.SIGINT, syscall.SIGTERM:
+                logger.Printf("Received shutdown signal: %v", sig)
+                gracefulShutdown()
+            case syscall.SIGHUP:
+                logger.Printf("Received SIGHUP, reloading configuration...")
+                // 这里可以添加重新加载配置的逻辑
+            }
+        }
+    }()
+}
+
+// 优雅关闭
+func gracefulShutdown() {
+    shutdownMutex.Lock()
+    if isShuttingDown {
+        shutdownMutex.Unlock()
+        logger.Println("Shutdown already in progress...")
+        return
+    }
+    isShuttingDown = true
+    shutdownMutex.Unlock()
+
+    logger.Println("========== Starting Graceful Shutdown ==========")
+    logger.Printf("Shutdown initiated at: %s", time.Now().Format("2006-01-02 15:04:05"))
+
+    // 停止监控调度器
+    stopMonitorCron()
+
+    // 按照启动顺序的反顺序关闭所有服务
+    stopAllServices()
+
+    // 等待所有服务关闭完成
+    logger.Println("Waiting for all services to stop...")
+    shutdownWG.Wait()
+
+    // 清理cgroup
+    if monitorConfig.EnableCgroup {
+        cleanupCgroup()
+    }
+
+    logger.Println("========== Graceful Shutdown Completed ==========")
+    logger.Printf("Total shutdown time: %v", time.Since(time.Now()))
+    os.Exit(0)
+}
+
+// 停止监控调度器
+func stopMonitorCron() {
+    if cronScheduler != nil {
+        logger.Println("Stopping monitor cron scheduler...")
+        cronScheduler.Stop()
+        logger.Println("✓ Cron scheduler stopped")
+    }
+}
+
+// 停止所有服务
+func stopAllServices() {
+    serviceMutex.RLock()
+    totalServices := len(services)
+    serviceMutex.RUnlock()
+
+    logger.Printf("Stopping %d service(s) in reverse startup order", totalServices)
+
+    // 反转启动顺序
+    reverseOrder := make([]string, len(serviceStartOrder))
+    for i, j := 0, len(serviceStartOrder)-1; i < len(serviceStartOrder); i, j = i+1, j-1 {
+        reverseOrder[i] = serviceStartOrder[j]
+    }
+
+    logger.Printf("Shutdown order: %v", reverseOrder)
+
+    // 并发停止所有服务，但每个服务有自己的超时控制
+    for _, serviceName := range reverseOrder {
+        shutdownWG.Add(1)
+        go func(name string) {
+            defer shutdownWG.Done()
+            stopServiceWithTimeout(name)
+        }(serviceName)
+    }
+}
+
+// 带超时的停止服务
+func stopServiceWithTimeout(serviceName string) {
+    logger.Printf("[%s] Starting shutdown process (timeout: %v)", serviceName, ServiceStopTimeout)
+
+    // 创建超时上下文
+    timeoutChan := time.After(ServiceStopTimeout)
+    doneChan := make(chan bool, 1)
+
+    // 启动停止goroutine
+    go func() {
+        stopService(serviceName)
+        doneChan <- true
+    }()
+
+    // 等待停止完成或超时
+    select {
+    case <-doneChan:
+        logger.Printf("[%s] ✓ Shutdown completed normally", serviceName)
+    case <-timeoutChan:
+        logger.Printf("[%s] ⚠ Shutdown timeout after %v, forcing kill...", serviceName, ServiceStopTimeout)
+        forceKillService(serviceName)
+    }
+}
+
+// 停止单个服务
+func stopService(serviceName string) {
+    startTime := time.Now()
+    logger.Printf("[%s] Stopping service...", serviceName)
+
+    serviceMutex.RLock()
+    status, exists := services[serviceName]
+    serviceMutex.RUnlock()
+
+    if !exists {
+        logger.Printf("[%s] Service not found", serviceName)
+        return
+    }
+
+    status.mutex.Lock()
+    defer status.mutex.Unlock()
+
+    // 如果服务已经停止，直接返回
+    if !status.IsRunning {
+        logger.Printf("[%s] Service already stopped", serviceName)
+        return
+    }
+
+    // 记录停止前的状态
+    originalPID := status.PID
+    logger.Printf("[%s] Current PID: %d", serviceName, originalPID)
+
+    // 如果有停止命令，使用停止命令
+    if status.Service.StopCmd != "" {
+        logger.Printf("[%s] Using stop command: %s", serviceName, status.Service.StopCmd)
+        cmd := exec.Command("sh", "-c", status.Service.StopCmd)
+        cmd.Dir = status.Service.WorkDir
+
+        // 设置超时
+        cmd.Stdout = os.Stdout
+        cmd.Stderr = os.Stderr
+
+        if err := cmd.Start(); err != nil {
+            logger.Printf("[%s] Failed to start stop command: %v", serviceName, err)
+        } else {
+            // 等待命令完成，最多等待ServiceStopTimeout的一半
+            timeout := ServiceStopTimeout / 2
+            done := make(chan error, 1)
+            go func() {
+                done <- cmd.Wait()
+            }()
+
+            select {
+            case err := <-done:
+                if err != nil {
+                    logger.Printf("[%s] Stop command completed with error: %v", serviceName, err)
+                } else {
+                    logger.Printf("[%s] Stop command completed successfully", serviceName)
+                }
+            case <-time.After(timeout):
+                logger.Printf("[%s] Stop command timeout after %v", serviceName, timeout)
+                cmd.Process.Kill()
+            }
+        }
+    }
+
+    // 直接杀死进程
+    killSuccess := false
+    if status.PID > 0 {
+        logger.Printf("[%s] Sending SIGTERM to PID %d", serviceName, status.PID)
+
+        process, err := os.FindProcess(status.PID)
+        if err != nil {
+            logger.Printf("[%s] Failed to find process: %v", serviceName, err)
+        } else {
+            // 先发送SIGTERM
+            if err := process.Signal(syscall.SIGTERM); err != nil {
+                logger.Printf("[%s] Failed to send SIGTERM: %v", serviceName, err)
+            } else {
+                // 等待进程退出
+                for i := 0; i < 10; i++ {
+                    if !isProcessRunning(status.PID) {
+                        killSuccess = true
+                        break
+                    }
+                    time.Sleep(1 * time.Second)
+                }
+            }
+
+            // 如果SIGTERM失败，尝试SIGKILL
+            if !killSuccess {
+                logger.Printf("[%s] Process still running, sending SIGKILL", serviceName)
+                if err := process.Kill(); err != nil {
+                    logger.Printf("[%s] Failed to kill process: %v", serviceName, err)
+                } else {
+                    killSuccess = true
+                }
+            }
+        }
+    }
+
+    // 清理PID文件
+    if _, err := os.Stat(status.Service.PIDFile); err == nil {
+        if err := os.Remove(status.Service.PIDFile); err != nil {
+            logger.Printf("[%s] Failed to remove PID file: %v", serviceName, err)
+        } else {
+            logger.Printf("[%s] Removed PID file: %s", serviceName, status.Service.PIDFile)
+        }
+    }
+
+    status.IsRunning = false
+    status.PID = 0
+
+    shutdownTime := time.Since(startTime)
+    if killSuccess {
+        logger.Printf("[%s] ✓ Service stopped (took %v)", serviceName, shutdownTime)
+    } else {
+        logger.Printf("[%s] ⚠ Service may not have stopped cleanly (took %v)", serviceName, shutdownTime)
+    }
+}
+
+// 强制杀死服务
+func forceKillService(serviceName string) {
+    logger.Printf("[%s] FORCE KILLING SERVICE", serviceName)
+
+    serviceMutex.RLock()
+    status, exists := services[serviceName]
+    serviceMutex.RUnlock()
+
+    if !exists {
+        return
+    }
+
+    status.mutex.Lock()
+    defer status.mutex.Unlock()
+
+    if status.PID > 0 {
+        process, err := os.FindProcess(status.PID)
+        if err == nil {
+            // 先尝试SIGKILL
+            if err := process.Kill(); err != nil {
+                logger.Printf("[%s] Failed to SIGKILL process: %v", serviceName, err)
+            } else {
+                logger.Printf("[%s] Sent SIGKILL to PID %d", serviceName, status.PID)
+            }
+        }
+
+        // 双保险：使用系统kill命令
+        cmd := exec.Command("kill", "-9", strconv.Itoa(status.PID))
+        cmd.Run()
+    }
+
+    // 强制移除PID文件
+    if _, err := os.Stat(status.Service.PIDFile); err == nil {
+        os.Remove(status.Service.PIDFile)
+    }
+
+    status.IsRunning = false
+    status.PID = 0
+    logger.Printf("[%s] ✗ Service force killed", serviceName)
+}
+
+// 初始化cgroup
+func initCgroup() {
+    logger.Println("Checking cgroup support...")
+
+    if _, err := os.Stat("/sys/fs/cgroup"); os.IsNotExist(err) {
+        logger.Println("Cgroup not supported or not mounted at /sys/fs/cgroup")
+        return
+    }
+
+    cgroupPath := filepath.Join("/sys/fs/cgroup", monitorConfig.CgroupName)
+    if err := os.MkdirAll(cgroupPath, 0755); err != nil {
+        logger.Printf("Failed to create cgroup directory: %v", err)
+        return
+    }
+
+    pid := os.Getpid()
+    pidFile := filepath.Join(cgroupPath, "cgroup.procs")
+    if err := ioutil.WriteFile(pidFile, []byte(strconv.Itoa(pid)), 0644); err != nil {
+        logger.Printf("Failed to add process to cgroup: %v", err)
+        return
+    }
+
+    logger.Printf("Successfully created and joined cgroup: %s", cgroupPath)
+    logger.Printf("Current process PID %d is now in cgroup", pid)
+}
+
+// 清理cgroup
+func cleanupCgroup() {
+    if !monitorConfig.EnableCgroup {
+        return
+    }
+
+    cgroupPath := filepath.Join("/sys/fs/cgroup", monitorConfig.CgroupName)
+
+    // 首先将当前进程移出cgroup（移到根cgroup）
+    pid := os.Getpid()
+    rootCgroupFile := "/sys/fs/cgroup/cgroup.procs"
+    if _, err := os.Stat(rootCgroupFile); err == nil {
+        ioutil.WriteFile(rootCgroupFile, []byte(strconv.Itoa(pid)), 0644)
+    }
+
+    // 尝试删除cgroup目录
+    time.Sleep(100 * time.Millisecond) // 等待进程移出
+
+    // 递归删除cgroup目录
+    if err := os.RemoveAll(cgroupPath); err != nil {
+        logger.Printf("Failed to remove cgroup directory: %v", err)
+    } else {
+        logger.Printf("✓ Cgroup cleaned up: %s", cgroupPath)
+    }
 }
 
 func loadConfigFromFile(filename string) {
@@ -175,6 +529,8 @@ func loadConfigFromFlags() {
     monitorConfig.LogLevel = *logLevel
     monitorConfig.LogPath = *logPath
     monitorConfig.Foreground = *foreground
+    monitorConfig.EnableCgroup = *enableCgroup
+    monitorConfig.CgroupName = *cgroupName
 }
 
 func saveConfigToFile(filename string) {
@@ -193,11 +549,6 @@ func saveConfigToFile(filename string) {
 }
 
 func setupLogger() {
-    // 设置日志级别
-//     level := strings.ToLower(monitorConfig.LogLevel)
-    // 这里可以实现日志级别过滤，简化起见直接输出所有级别
-
-    // 设置日志输出路径
     if monitorConfig.LogPath != "" {
         logFile := filepath.Join(monitorConfig.LogPath, "monitor.log")
         file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
@@ -210,11 +561,9 @@ func setupLogger() {
 }
 
 func daemonize() {
-    // 创建守护进程
     cmd := exec.Command(os.Args[0], os.Args[1:]...)
     cmd.Env = os.Environ()
 
-    // 启动子进程
     if err := cmd.Start(); err != nil {
         logger.Fatalf("Failed to start daemon: %v", err)
     }
@@ -224,7 +573,8 @@ func daemonize() {
 }
 
 func loadServiceConfigs(configDir string) {
-    // 查找所有_service.json文件
+    logger.Printf("========== Loading Service Configurations ==========")
+
     pattern := filepath.Join(configDir, "*_service.json")
     files, err := filepath.Glob(pattern)
     if err != nil {
@@ -232,16 +582,28 @@ func loadServiceConfigs(configDir string) {
         return
     }
 
-    // 按文件名排序
+    if len(files) == 0 {
+        logger.Println("No service configuration files found")
+        return
+    }
+
+    logger.Printf("Found %d service configuration file(s)", len(files))
+
     sort.Strings(files)
 
-    for _, file := range files {
+    for i, file := range files {
+        logger.Printf("\n[%d/%d] Loading: %s", i+1, len(files), filepath.Base(file))
         loadServiceConfig(file)
     }
+
+    logger.Printf("========== Service Configuration Summary ==========")
+    logger.Printf("Total services loaded: %d", len(services))
+    logger.Printf("Startup order: %v", serviceStartOrder)
+    logger.Println("=================================================")
 }
 
 func loadServiceConfig(filename string) {
-    data, err := os.ReadFile(filename)
+    data, err := ioutil.ReadFile(filename)
     if err != nil {
         logger.Printf("Failed to read service config %s: %v", filename, err)
         return
@@ -283,6 +645,10 @@ func loadServiceConfig(filename string) {
         serviceConfig.MaxFailures = DefaultMaxFailures
     }
 
+    if serviceConfig.Description == "" {
+        serviceConfig.Description = fmt.Sprintf("Service defined in %s", filepath.Base(filename))
+    }
+
     // 验证必要字段
     if serviceConfig.StartCmd == "" || serviceConfig.PIDFile == "" {
         logger.Printf("Service config %s missing required fields", filename)
@@ -291,6 +657,7 @@ func loadServiceConfig(filename string) {
 
     // 创建服务状态
     serviceName := strings.TrimSuffix(filepath.Base(filename), "_service.json")
+
     serviceStatus := &ServiceStatus{
         Service:   &serviceConfig,
         IsRunning: false,
@@ -302,23 +669,23 @@ func loadServiceConfig(filename string) {
     services[serviceName] = serviceStatus
     serviceMutex.Unlock()
 
-    logger.Printf("Loaded service config: %s", serviceName)
+    // 记录启动顺序
+    serviceStartOrder = append(serviceStartOrder, serviceName)
+
+    logger.Printf("✓ Successfully loaded: %s", serviceName)
 }
 
 func startAllServices() {
-    serviceMutex.RLock()
-    serviceNames := make([]string, 0, len(services))
-    for name := range services {
-        serviceNames = append(serviceNames, name)
-    }
-    serviceMutex.RUnlock()
+    logger.Println("========== Starting All Services ==========")
 
-    // 按文件名排序启动
-    sort.Strings(serviceNames)
+    logger.Printf("Starting %d service(s) in order: %v", len(serviceStartOrder), serviceStartOrder)
 
-    for _, name := range serviceNames {
+    for _, name := range serviceStartOrder {
         go startService(name)
+        time.Sleep(1 * time.Second)
     }
+
+    logger.Println("==========================================")
 }
 
 func startService(serviceName string) {
@@ -330,10 +697,31 @@ func startService(serviceName string) {
         return
     }
 
+    logger.Printf("[%s] Starting service...", serviceName)
+
     status.mutex.Lock()
     defer status.mutex.Unlock()
 
-    // 设置环境变量（不带MONITOR_前缀）
+    // 检查是否正在关闭
+    shutdownMutex.RLock()
+    if isShuttingDown {
+        shutdownMutex.RUnlock()
+        logger.Printf("[%s] Skipping start (shutdown in progress)", serviceName)
+        return
+    }
+    shutdownMutex.RUnlock()
+
+    // 检查依赖的服务是否已启动
+    if len(status.Service.DependsOn) > 0 {
+        logger.Printf("[%s] Checking dependencies: %v", serviceName, status.Service.DependsOn)
+        for _, dep := range status.Service.DependsOn {
+            if depStatus, ok := services[dep]; ok && depStatus.IsRunning {
+                logger.Printf("[%s] ✓ Dependency satisfied: %s", serviceName, dep)
+            }
+        }
+    }
+
+    // 设置环境变量
     env := os.Environ()
     env = append(env, fmt.Sprintf("WORKSPACE=%s", monitorConfig.Workspace))
     env = append(env, fmt.Sprintf("PROJECT_ID=%s", monitorConfig.ProjectID))
@@ -342,6 +730,7 @@ func startService(serviceName string) {
     env = append(env, fmt.Sprintf("UUID=%s", monitorConfig.UUID))
     env = append(env, fmt.Sprintf("LOG_LEVEL=%s", monitorConfig.LogLevel))
     env = append(env, fmt.Sprintf("LOG_PATH=%s", monitorConfig.LogPath))
+    env = append(env, fmt.Sprintf("BUILD_VERSION=%s", BuildVersion))
 
     // 执行启动命令
     cmd := exec.Command("sh", "-c", status.Service.StartCmd)
@@ -353,19 +742,24 @@ func startService(serviceName string) {
         os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
     if err == nil {
         cmd.Stdout = stdoutFile
+        logger.Printf("[%s] Stdout log: %s", serviceName, status.Service.StdoutLog)
     }
 
     stderrFile, err := os.OpenFile(status.Service.StderrLog,
         os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
     if err == nil {
         cmd.Stderr = stderrFile
+        logger.Printf("[%s] Stderr log: %s", serviceName, status.Service.StderrLog)
     }
+
+    logger.Printf("[%s] Working directory: %s", serviceName, status.Service.WorkDir)
+    logger.Printf("[%s] Monitor mode: %s", serviceName, status.Service.MonitorMode)
 
     // 根据监控模式处理PID文件
     if status.Service.MonitorMode == "monitor" {
-        // 前台运行，由monitor写入PID
+        logger.Printf("[%s] Running in foreground (monitor mode)", serviceName)
         if err := cmd.Start(); err != nil {
-            logger.Printf("Failed to start service %s: %v", serviceName, err)
+            logger.Printf("[%s] Failed to start service: %v", serviceName, err)
             return
         }
 
@@ -374,9 +768,11 @@ func startService(serviceName string) {
         status.Process = cmd.Process
 
         // 写入PID文件
-        if err := os.WriteFile(status.Service.PIDFile,
+        if err := ioutil.WriteFile(status.Service.PIDFile,
             []byte(fmt.Sprintf("%d", pid)), 0644); err != nil {
-            logger.Printf("Failed to write PID file for %s: %v", serviceName, err)
+            logger.Printf("[%s] Failed to write PID file: %v", serviceName, err)
+        } else {
+            logger.Printf("[%s] PID written to: %s", serviceName, status.Service.PIDFile)
         }
 
         go func() {
@@ -384,32 +780,54 @@ func startService(serviceName string) {
             status.mutex.Lock()
             status.IsRunning = false
             status.mutex.Unlock()
-            logger.Printf("Service %s exited", serviceName)
+
+            // 检查是否正在关闭，如果不是，可能需要重启
+            shutdownMutex.RLock()
+            if !isShuttingDown {
+                shutdownMutex.RUnlock()
+                logger.Printf("[%s] Service exited unexpectedly, will restart", serviceName)
+                time.Sleep(5 * time.Second)
+                startService(serviceName)
+            } else {
+                shutdownMutex.RUnlock()
+                logger.Printf("[%s] Service exited during shutdown", serviceName)
+            }
         }()
     } else {
-        // 后台运行，服务自己写入PID
+        logger.Printf("[%s] Running in background (self mode)", serviceName)
         if err := cmd.Start(); err != nil {
-            logger.Printf("Failed to start service %s: %v", serviceName, err)
+            logger.Printf("[%s] Failed to start service: %v", serviceName, err)
             return
         }
 
         // 等待服务写入PID文件
-        time.Sleep(2 * time.Second)
-
-        // 读取PID文件
-        if pidData, err := os.ReadFile(status.Service.PIDFile); err == nil {
-            var pid int
-            fmt.Sscanf(string(pidData), "%d", &pid)
-            status.PID = pid
+        logger.Printf("[%s] Waiting for PID file: %s", serviceName, status.Service.PIDFile)
+        for i := 0; i < 5; i++ {
+            time.Sleep(1 * time.Second)
+            if pidData, err := ioutil.ReadFile(status.Service.PIDFile); err == nil {
+                var pid int
+                fmt.Sscanf(string(pidData), "%d", &pid)
+                status.PID = pid
+                logger.Printf("[%s] Got PID from file: %d", serviceName, pid)
+                break
+            }
         }
     }
 
     status.IsRunning = true
     status.StartTime = time.Now()
-    logger.Printf("Service %s started", serviceName)
+    logger.Printf("[%s] ✓ Service started successfully", serviceName)
 }
 
 func checkServiceStatus() {
+    // 检查是否正在关闭
+    shutdownMutex.RLock()
+    if isShuttingDown {
+        shutdownMutex.RUnlock()
+        return
+    }
+    shutdownMutex.RUnlock()
+
     serviceMutex.RLock()
     defer serviceMutex.RUnlock()
 
@@ -418,19 +836,33 @@ func checkServiceStatus() {
             s.mutex.Lock()
             defer s.mutex.Unlock()
 
+            // 检查是否正在关闭
+            shutdownMutex.RLock()
+            if isShuttingDown {
+                shutdownMutex.RUnlock()
+                return
+            }
+            shutdownMutex.RUnlock()
+
             // 检查进程是否运行
             running := isProcessRunning(s.PID)
 
             if running {
+                if !s.IsRunning {
+                    logger.Printf("[%s] Service recovered", name)
+                }
                 s.IsRunning = true
                 s.FailCount = 0
             } else {
                 s.FailCount++
                 s.IsRunning = false
 
+                logger.Printf("[%s] Service not running (fail count: %d/%d)",
+                    name, s.FailCount, s.Service.MaxFailures)
+
                 // 检查是否达到最大失败次数
                 if s.FailCount >= s.Service.MaxFailures {
-                    logger.Printf("Service %s failed %d times, restarting", name, s.FailCount)
+                    logger.Printf("[%s] Max failures reached, restarting...", name)
                     restartService(name)
                     s.FailCount = 0
                 }
@@ -451,95 +883,91 @@ func isProcessRunning(pid int) bool {
         return false
     }
 
-    // 发送信号0来检查进程是否存在
-    err = process.Signal(os.Signal(nil))
+    err = process.Signal(syscall.Signal(0))
     return err == nil
 }
 
-func stopService(serviceName string) {
-    serviceMutex.RLock()
-    status, exists := services[serviceName]
-    serviceMutex.RUnlock()
-
-    if !exists {
+func restartService(serviceName string) {
+    // 检查是否正在关闭
+    shutdownMutex.RLock()
+    if isShuttingDown {
+        shutdownMutex.RUnlock()
         return
     }
+    shutdownMutex.RUnlock()
 
-    status.mutex.Lock()
-    defer status.mutex.Unlock()
-
-    // 如果有停止命令，使用停止命令
-    if status.Service.StopCmd != "" {
-        cmd := exec.Command("sh", "-c", status.Service.StopCmd)
-        cmd.Dir = status.Service.WorkDir
-        if err := cmd.Run(); err != nil {
-            logger.Printf("Failed to stop service %s with command: %v", serviceName, err)
-        }
-    } else {
-        // 直接杀死进程
-        if status.PID > 0 {
-            process, err := os.FindProcess(status.PID)
-            if err == nil {
-                process.Kill()
-            }
-        }
-    }
-
-    status.IsRunning = false
-    logger.Printf("Service %s stopped", serviceName)
-}
-
-func restartService(serviceName string) {
-    logger.Printf("Restarting service %s", serviceName)
+    logger.Printf("[%s] === Restarting Service ===", serviceName)
 
     stopService(serviceName)
 
-    // 如果有重启命令，使用重启命令
-    serviceMutex.RLock()
-    status, exists := services[serviceName]
-    serviceMutex.RUnlock()
+    // 等待2秒
+    time.Sleep(2 * time.Second)
 
-    if !exists {
+    // 检查是否正在关闭
+    shutdownMutex.RLock()
+    if isShuttingDown {
+        shutdownMutex.RUnlock()
         return
     }
+    shutdownMutex.RUnlock()
 
-    if status.Service.RestartCmd != "" {
-        cmd := exec.Command("sh", "-c", status.Service.RestartCmd)
-        cmd.Dir = status.Service.WorkDir
+    // 重新启动服务
+    go startService(serviceName)
 
-        // 设置环境变量（不带MONITOR_前缀）
-        env := os.Environ()
-        env = append(env, fmt.Sprintf("WORKSPACE=%s", monitorConfig.Workspace))
-        env = append(env, fmt.Sprintf("PROJECT_ID=%s", monitorConfig.ProjectID))
-        env = append(env, fmt.Sprintf("SERVER_ADDR=%s", monitorConfig.ServerAddr))
-        env = append(env, fmt.Sprintf("SERVER_PORT=%s", monitorConfig.ServerPort))
-        env = append(env, fmt.Sprintf("UUID=%s", monitorConfig.UUID))
-        env = append(env, fmt.Sprintf("LOG_LEVEL=%s", monitorConfig.LogLevel))
-        env = append(env, fmt.Sprintf("LOG_PATH=%s", monitorConfig.LogPath))
-        cmd.Env = env
-
-        if err := cmd.Start(); err != nil {
-            logger.Printf("Failed to restart service %s: %v", serviceName, err)
-            // 如果重启命令失败，尝试正常启动
-            go startService(serviceName)
-        }
-    } else {
-        // 正常重启流程
-        go startService(serviceName)
-    }
+    logger.Printf("[%s] === Restart Completed ===", serviceName)
 }
 
 func startMonitorCron() {
     cronScheduler = cron.New()
 
     // 每10秒检查一次服务状态
-    cronScheduler.AddFunc(fmt.Sprintf("@every %ds", DefaultCheckInterval), checkServiceStatus)
+    cronScheduler.AddFunc("@every 10s", func() {
+        checkServiceStatus()
+    })
+
+    // 每小时打印一次状态报告
+    cronScheduler.AddFunc("@hourly", func() {
+        printStatusReport()
+    })
 
     cronScheduler.Start()
     logger.Println("Monitor cron scheduler started")
 }
 
-func keepAlive() {
-    // 主循环，保持程序运行
+func printStatusReport() {
+    // 检查是否正在关闭
+    shutdownMutex.RLock()
+    if isShuttingDown {
+        shutdownMutex.RUnlock()
+        return
+    }
+    shutdownMutex.RUnlock()
+
+    logger.Println("========== Status Report ==========")
+    logger.Printf("Agent Version: %s", BuildVersion)
+    logger.Printf("Agent UUID: %s", monitorConfig.UUID)
+    logger.Printf("Uptime: %s", time.Now().Format("2006-01-02 15:04:05"))
+    logger.Printf("Total services: %d", len(services))
+
+    serviceMutex.RLock()
+    defer serviceMutex.RUnlock()
+
+    runningCount := 0
+    for _, status := range services {
+        status.mutex.RLock()
+        if status.IsRunning {
+            runningCount++
+        }
+        status.mutex.RUnlock()
+    }
+
+    logger.Printf("Services running: %d/%d", runningCount, len(services))
+    logger.Println("==================================")
+}
+
+func waitForShutdown() {
+    logger.Println("Agent is now running. Press Ctrl+C or send SIGTERM for graceful shutdown.")
+
+    // 阻塞主线程，等待信号
     select {}
 }

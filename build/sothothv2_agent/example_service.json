@@ -1,7 +1,8 @@
 {
   "name": "my-service",
+  "description": "主应用服务",
   "start_cmd": "./bin/my-service --config=config.json",
-  "stop_cmd": "./bin/my-service --stop",
+  "stop_cmd": "./bin/my-service --stop",  // 优雅停止命令
   "restart_cmd": "./bin/my-service --restart",
   "pid_file": "/var/run/my-service.pid",
   "stdout_log": "/var/log/my-service/stdout.log",
@@ -9,5 +10,6 @@
   "work_dir": "/opt/my-service",
   "monitor_mode": "self",
   "check_interval": 10,
-  "max_failures": 6
+  "max_failures": 6,
+  "depends_on": ["redis-service", "db-service"]
 }

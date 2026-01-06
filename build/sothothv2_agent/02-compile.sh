@@ -4,7 +4,8 @@
 set -e
 
 ARCHS=("x86_64" "aarch64" "armhf" "armel" "riscv64")
-VERSION="v1.0.0"
+BUILD_VERSION=$(date +"%Y%m%d.%H%M%S")
+VERSION="${VERSION}"
 
 go mod tidy
 go mod download
