@@ -1,0 +1,56 @@
+name: build_frida_server
+on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - .github/workflows/build_frida_server.yml
+      - build/frida_server/*
+      - build/common/*
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up frida_server binary
+        run:  bash ${{ github.workspace }}/build/frida_server/build.sh
+
+      - name: List Dir
+        run: ls -lRt ${{ github.workspace }}
+
+      - name: Upload binary to artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: frida_server-17.5.2-linux-armel.tar.gz
+          path: ${{ github.workspace }}/build/frida_server/install/frida_server-17.5.2-linux-armel.tar.gz
+
+      - name: Upload binary to artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: frida_server-17.5.2-linux-armhf.tar.gz
+          path: ${{ github.workspace }}/build/frida_server/install/frida_server-17.5.2-linux-armhf.tar.gz
+
+      - name: Upload binary to artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: frida_server-17.5.2-linux-aarch64.tar.gz
+          path: ${{ github.workspace }}/build/frida_server/install/frida_server-17.5.2-linux-aarch64.tar.gz
+
+      - name: Upload binary to artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: frida_server-17.5.2-linux-x86_64.tar.gz
+          path: ${{ github.workspace }}/build/frida_server/install/frida_server-17.5.2-linux-x86_64.tar.gz
+
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: v1.0
+          name: "Release v1.0"
+          artifacts: "${{ github.workspace }}/build/frida_server/install/*"
+          artifactErrorsFailBuild: false
+          allowUpdates: true  # 允许更新已存在的release
+          token: ${{ secrets.GITHUB_TOKEN }}
