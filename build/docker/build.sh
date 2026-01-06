@@ -47,13 +47,14 @@ do
 
   cd "$BUILD_DIR"
   tar -zxvf docker-${VERSION}.tgz
-  mv docker-compose docker/docker-compose
+  mv docker-compose docker/docker-compose && chmod +x docker/docker-compose
   mv docker bin
   rm -rf docker-${VERSION}.tgz
   mkdir conf
   cp /build/config.toml         conf/config.toml
   cp /build/daemon.json         conf/daemon.json
   cp /build/docker-swarm.conf   conf/docker-swarm.conf
+  strip_elf_files "./bin/"
   tar -czvf ../docker-${VERSION}-linux-${ARCH}.tar.gz .
   mv  ../docker-${VERSION}-linux-${ARCH}.tar.gz "$INSTALL_DIR/docker-${VERSION}-linux-${ARCH}.tar.gz"
   cd "$BUILD_DIR"

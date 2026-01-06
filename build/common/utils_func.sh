@@ -16,7 +16,7 @@ strip_elf_files() {
             # 备份原始文件（可选）
             # cp "$file" "$file.backup"
             # 执行 strip
-            if strip --strip-all "$file" 2>/dev/null; then
+            if strip -s "$file" 2>/dev/null; then
                 echo "  ✓ 成功"
             else
                 echo "  ✗ 失败: $file 可能不是有效的 ELF 文件或已经 stripped"
