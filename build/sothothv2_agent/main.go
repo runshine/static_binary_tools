@@ -164,8 +164,8 @@ func main() {
     logger.Printf("Server: %s:%s", monitorConfig.ServerAddr, monitorConfig.ServerPort)
     logger.Printf("Signal handler installed. Send SIGINT or SIGTERM for graceful shutdown.")
 
-    // 初始化服务
-    services = make(map[string]*ServiceConfig)
+    // 初始化服务 - 这里使用正确的类型
+    services = make(map[string]*ServiceStatus)
     serviceStartOrder = make([]string, 0)
 
     // 创建service_config目录
@@ -655,7 +655,7 @@ func loadServiceConfig(filename string) {
         return
     }
 
-    // 创建服务状态
+    // 创建服务状态 - 使用正确的类型
     serviceName := strings.TrimSuffix(filepath.Base(filename), "_service.json")
 
     serviceStatus := &ServiceStatus{
