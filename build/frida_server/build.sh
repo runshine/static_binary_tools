@@ -38,7 +38,9 @@ strip_elf_files "$BUILD_DIR/bin/"
 package_release_tar "${BUILD_DIR}" frida_server-${VERSION}-linux-x86_64.tar.gz
 cd "$BUILD_DIR" && rm * -rf
 
-mv ../*.tar.gz ${INSTALL_DIR}/
+mv $BUILD_DIR/../frida_server-${VERSION}-linux-aarch64.tar.gz   ${INSTALL_DIR}/frida_server-${VERSION}-linux-aarch64.tar.gz
+mv $BUILD_DIR/../frida_server-${VERSION}-linux-armhf.tar.gz   ${INSTALL_DIR}/frida_server-${VERSION}-linux-armhf.tar.gz
+mv $BUILD_DIR/../frida_server-${VERSION}-linux-x86_64.tar.gz   ${INSTALL_DIR}/frida_server-${VERSION}-linux-x86_64.tar.gz
 
 echo "done"
 
