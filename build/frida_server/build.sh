@@ -18,6 +18,7 @@ xz -d frida-server.xz
 mkdir -p $BUILD_DIR/bin/ && mv frida-server* $BUILD_DIR/bin/frida-server
 strip_elf_files "$BUILD_DIR/bin/"
 package_release_tar "${BUILD_DIR}" frida_server-${VERSION}-linux-aarch64.tar.gz
+mv frida_server-${VERSION}-linux-aarch64.tar.gz   ${INSTALL_DIR}/frida_server-${VERSION}-linux-aarch64.tar.gz
 cd "$BUILD_DIR" && rm * -rf
 
 
@@ -27,6 +28,7 @@ xz -d frida-server.xz &&
 mkdir -p $BUILD_DIR/bin/ && mv frida-server* $BUILD_DIR/bin/frida-server
 strip_elf_files "$BUILD_DIR/bin/"
 package_release_tar "${BUILD_DIR}" frida_server-${VERSION}-linux-armhf.tar.gz
+mv frida_server-${VERSION}-linux-armhf.tar.gz   ${INSTALL_DIR}/frida_server-${VERSION}-linux-armhf.tar.gz
 cd "$BUILD_DIR" && rm * -rf
 
 
@@ -36,13 +38,9 @@ xz -d frida-server.xz
 mkdir -p $BUILD_DIR/bin/ && mv frida-server* $BUILD_DIR/bin/frida-server
 strip_elf_files "$BUILD_DIR/bin/"
 package_release_tar "${BUILD_DIR}" frida_server-${VERSION}-linux-x86_64.tar.gz
+mv frida_server-${VERSION}-linux-x86_64.tar.gz   ${INSTALL_DIR}/frida_server-${VERSION}-linux-x86_64.tar.gz
 cd "$BUILD_DIR" && rm * -rf
 
-ls -ll $BUILD_DIR/../
-
-mv $BUILD_DIR/../frida_server-${VERSION}-linux-aarch64.tar.gz   ${INSTALL_DIR}/frida_server-${VERSION}-linux-aarch64.tar.gz
-mv $BUILD_DIR/../frida_server-${VERSION}-linux-armhf.tar.gz   ${INSTALL_DIR}/frida_server-${VERSION}-linux-armhf.tar.gz
-mv $BUILD_DIR/../frida_server-${VERSION}-linux-x86_64.tar.gz   ${INSTALL_DIR}/frida_server-${VERSION}-linux-x86_64.tar.gz
 
 echo "done"
 
