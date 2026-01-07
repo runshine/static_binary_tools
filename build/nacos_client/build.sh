@@ -8,6 +8,10 @@ apt update && apt-get -y install curl wget unzip
 
 VERSION="latest"
 
+cd /build
+
+ls -ll .
+
 tar -czvf "${INSTALL_DIR}/nacos_client-${VERSION}-linux-aarch64.tar.gz" nacos
 tar -czvf "${INSTALL_DIR}/nacos_client-${VERSION}-linux-x86_64.tar.gz" nacos
 tar -czvf "${INSTALL_DIR}/nacos_client-${VERSION}-linux-armhf.tar.gz" nacos
