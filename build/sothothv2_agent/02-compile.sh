@@ -2,7 +2,7 @@
 # build-all.sh
 
 set -e
-
+export TZ="GMT+8"
 ARCHS=("x86_64" "aarch64" "armhf" "armel" "riscv64")
 BUILD_VERSION=$(date +"%Y%m%d.%H%M%S")
 VERSION="${BUILD_VERSION}"
