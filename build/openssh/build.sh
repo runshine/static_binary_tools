@@ -163,6 +163,7 @@ process_ssh_data(){
       tar -zxvf "${file}" -C "$source_dir/tmp/tmp"
       cd "$source_dir/tmp/tmp/opt"
 
+      [ -d "$source_dir/tmp/tmp/opt/openssh/etc/ssh/" ] || mkdir -p "$source_dir/tmp/tmp/opt/openssh/etc/ssh/"
       touch "$source_dir/tmp/tmp/opt/openssh/etc/ssh/sshd_config"
       rm -rf "$source_dir/tmp/tmp/opt/openssh/etc/sshd_config"
       generate_sshd_config "$source_dir/tmp/tmp/opt/openssh/etc/ssh/sshd_config"
