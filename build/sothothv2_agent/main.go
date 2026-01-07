@@ -99,7 +99,7 @@ var (
 const (
     DefaultCheckInterval = 10
     DefaultMaxFailures = 6
-    ServiceStopTimeout = 20 * time.Second  // 单个服务最大退出时长
+    ServiceStopTimeout = 10 * time.Second  // 修改为10秒
 )
 
 func init() {
@@ -163,8 +163,9 @@ func main() {
     logger.Printf("Project ID: %s", monitorConfig.ProjectID)
     logger.Printf("Server: %s:%s", monitorConfig.ServerAddr, monitorConfig.ServerPort)
     logger.Printf("Signal handler installed. Send SIGINT or SIGTERM for graceful shutdown.")
+    logger.Printf("Service stop timeout: %v", ServiceStopTimeout)
 
-    // 初始化服务 - 这里使用正确的类型
+    // 初始化服务
     services = make(map[string]*ServiceStatus)
     serviceStartOrder = make([]string, 0)
 
@@ -217,8 +218,9 @@ func gracefulShutdown() {
     isShuttingDown = true
     shutdownMutex.Unlock()
 
+    shutdownStartTime := time.Now()
     logger.Println("========== Starting Graceful Shutdown ==========")
-    logger.Printf("Shutdown initiated at: %s", time.Now().Format("2006-01-02 15:04:05"))
+    logger.Printf("Shutdown initiated at: %s", shutdownStartTime.Format("2006-01-02 15:04:05"))
 
     // 停止监控调度器
     stopMonitorCron()
@@ -230,13 +232,19 @@ func gracefulShutdown() {
     logger.Println("Waiting for all services to stop...")
     shutdownWG.Wait()
 
+    // 显示统计信息
+    printShutdownStatistics(shutdownStartTime)
+
     // 清理cgroup
     if monitorConfig.EnableCgroup {
         cleanupCgroup()
     }
 
-    logger.Println("========== Graceful Shutdown Completed ==========")
-    logger.Printf("Total shutdown time: %v", time.Since(time.Now()))
+    logger.Println("========== All Services Stopped, Monitor Exiting ==========")
+    logger.Printf("Total shutdown time: %v", time.Since(shutdownStartTime))
+
+    // 延迟1秒确保日志写入
+    time.Sleep(1 * time.Second)
     os.Exit(0)
 }
 
@@ -264,6 +272,7 @@ func stopAllServices() {
     }
 
     logger.Printf("Shutdown order: %v", reverseOrder)
+    logger.Printf("Each service timeout: %v", ServiceStopTimeout)
 
     // 并发停止所有服务，但每个服务有自己的超时控制
     for _, serviceName := range reverseOrder {
@@ -282,6 +291,7 @@ func stopServiceWithTimeout(serviceName string) {
     // 创建超时上下文
     timeoutChan := time.After(ServiceStopTimeout)
     doneChan := make(chan bool, 1)
+    forceKilledChan := make(chan bool, 1)
 
     // 启动停止goroutine
     go func() {
@@ -296,6 +306,15 @@ func stopServiceWithTimeout(serviceName string) {
     case <-timeoutChan:
         logger.Printf("[%s] ⚠ Shutdown timeout after %v, forcing kill...", serviceName, ServiceStopTimeout)
         forceKillService(serviceName)
+        forceKilledChan <- true
+    }
+
+    // 等待强制杀死完成
+    select {
+    case <-forceKilledChan:
+        logger.Printf("[%s] ✗ Service force killed after timeout", serviceName)
+    default:
+        // 正常关闭，不需要处理
     }
 }
 
@@ -373,8 +392,8 @@ func stopService(serviceName string) {
             if err := process.Signal(syscall.SIGTERM); err != nil {
                 logger.Printf("[%s] Failed to send SIGTERM: %v", serviceName, err)
             } else {
-                // 等待进程退出
-                for i := 0; i < 10; i++ {
+                // 等待进程退出，最多等待5秒
+                for i := 0; i < 5; i++ {
                     if !isProcessRunning(status.PID) {
                         killSuccess = true
                         break
@@ -454,6 +473,39 @@ func forceKillService(serviceName string) {
     status.IsRunning = false
     status.PID = 0
     logger.Printf("[%s] ✗ Service force killed", serviceName)
+}
+
+// 打印关闭统计信息
+func printShutdownStatistics(startTime time.Time) {
+    logger.Println("========== Shutdown Statistics ==========")
+    logger.Printf("Shutdown start time: %s", startTime.Format("2006-01-02 15:04:05"))
+    logger.Printf("Shutdown end time: %s", time.Now().Format("2006-01-02 15:04:05"))
+    logger.Printf("Total shutdown duration: %v", time.Since(startTime))
+    logger.Printf("Total services: %d", len(services))
+
+    serviceMutex.RLock()
+    defer serviceMutex.RUnlock()
+
+    stoppedCount := 0
+    runningCount := 0
+    for _, status := range services {
+        status.mutex.RLock()
+        if status.IsRunning {
+            runningCount++
+        } else {
+            stoppedCount++
+        }
+        status.mutex.RUnlock()
+    }
+
+    logger.Printf("Services successfully stopped: %d", stoppedCount)
+    logger.Printf("Services still running (failed to stop): %d", runningCount)
+
+    if runningCount > 0 {
+        logger.Println("Warning: Some services may not have been stopped cleanly!")
+    }
+
+    logger.Println("=========================================")
 }
 
 // 初始化cgroup
@@ -655,7 +707,7 @@ func loadServiceConfig(filename string) {
         return
     }
 
-    // 创建服务状态 - 使用正确的类型
+    // 创建服务状态
     serviceName := strings.TrimSuffix(filepath.Base(filename), "_service.json")
 
     serviceStatus := &ServiceStatus{
