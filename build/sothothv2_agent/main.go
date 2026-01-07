@@ -67,7 +67,7 @@ type ServiceStatus struct {
 // 全局变量
 var (
     // 版本号使用日期格式：YYYYMMDD.HHMMSS
-    BuildVersion = time.Now().Format("20060102.150405")
+    BuildVersion = time.Now().Format("20060107.210405")
 
     configFile  = flag.String("config", "monitor.ini", "配置文件路径")
     workspace   = flag.String("workspace", "", "工作空间目录")
