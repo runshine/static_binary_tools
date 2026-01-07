@@ -2,6 +2,11 @@
 # build-all.sh
 
 set -e
+
+source "$(cd `dirname $0`;pwd)/../common/prepare_dir.sh"
+source "$(cd `dirname $0`;pwd)/../common/utils_func.sh"
+source "$(cd `dirname $0`;pwd)/../common/arch_detect.sh"
+
 export TZ="GMT+8"
 ARCHS=("x86_64" "aarch64" "armhf" "armel" "riscv64")
 BUILD_VERSION=$(date +"%Y%m%d.%H%M%S")
@@ -49,12 +54,14 @@ for arch in "${ARCHS[@]}"; do
         CGO_ENABLED=0 GOOS=linux GOARCH=$GOARCH GOARM=$GOARM \
         go build -ldflags="-s -w -X main.Version=$VERSION" \
         -o "bin/sothothv2_agent" main.go
+        strip_elf_files "./bin/"
         tar -czvf "${INSTALL_DIR}/sothothv2_agent-${VERSION}-linux-${arch}.tar.gz" ./bin/
         rm "bin/sothothv2_agent"
     else
         CGO_ENABLED=0 GOOS=linux GOARCH=$GOARCH \
         go build -ldflags="-s -w -X main.Version=$VERSION" \
         -o "bin/sothothv2_agent" main.go
+        strip_elf_files "./bin/"
         tar -czvf "${INSTALL_DIR}/sothothv2_agent-${VERSION}-linux-${arch}.tar.gz" ./bin/
         rm "bin/sothothv2_agent"
     fi
