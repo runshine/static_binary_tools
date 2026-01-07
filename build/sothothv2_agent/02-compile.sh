@@ -7,6 +7,8 @@ ARCHS=("x86_64" "aarch64" "armhf" "armel" "riscv64")
 BUILD_VERSION=$(date +"%Y%m%d.%H%M%S")
 VERSION="${BUILD_VERSION}"
 
+sed -i "s/20060107.210405/${VERSION}/g" main.go
+
 go mod tidy
 go mod download
 go list -m all | grep -v 'golang.org/x' | grep -v 'github.com/google'
