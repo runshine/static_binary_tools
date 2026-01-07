@@ -16,6 +16,7 @@ GDB_ARMHF="https://github.com/guyush1/gdb-static/releases/download/${VERSION}-st
 GDB_ARMEL="https://github.com/guyush1/gdb-static/releases/download/${VERSION}-static/gdb-static-full-arm.tar.gz"
 GDB_X64="https://github.com/guyush1/gdb-static/releases/download/${VERSION}-static/gdb-static-full-x86_64.tar.gz"
 
+ls -ll /build/
 
 mkdir -p "$INSTALL_DIR/bin"
 cd "$INSTALL_DIR"
