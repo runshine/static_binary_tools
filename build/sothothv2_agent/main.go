@@ -56,6 +56,7 @@ type ServiceConfig struct {
 type ServiceStatus struct {
     Service     *ServiceConfig
     Process     *os.Process
+    Cmd         *exec.Cmd        // 新增：保存cmd引用
     PID         int
     StartTime   time.Time
     FailCount   int
@@ -74,7 +75,7 @@ var (
     projectID   = flag.String("project-id", "", "项目ID")
     serverAddr  = flag.String("server-addr", "", "服务器地址")
     serverPort  = flag.String("server-port", "", "服务器端口")
-    uuidFlag    = flag.String("uuid", "", "Agent UUID")
+    uuidFlag    = string(*uuidFlag)
     logLevel    = flag.String("log-level", "info", "日志级别")
     logPath     = flag.String("log-path", "", "日志目录")
     foreground  = flag.Bool("foreground", false, "在前台运行")
@@ -360,8 +361,6 @@ func killProcessTree(pid int) bool {
         processTree = []int{pid}
     }
 
-    logger.Printf("Process tree contains %d processes: %v", len(processTree), processTree)
-
     // 先向所有进程发送SIGTERM（优雅退出）
     for _, p := range processTree {
         if p <= 0 {
@@ -380,8 +379,6 @@ func killProcessTree(pid int) bool {
                !strings.Contains(err.Error(), "finished") {
                 logger.Printf("Failed to send SIGTERM to process %d: %v", p, err)
             }
-        } else {
-            logger.Printf("Sent SIGTERM to process %d", p)
         }
     }
 
@@ -397,7 +394,7 @@ func killProcessTree(pid int) bool {
     }
 
     if len(aliveProcesses) > 0 {
-        logger.Printf("Still %d processes alive, sending SIGKILL: %v", len(aliveProcesses), aliveProcesses)
+        logger.Printf("Still %d processes alive, sending SIGKILL", len(aliveProcesses))
 
         for _, p := range aliveProcesses {
             process, err := os.FindProcess(p)
@@ -407,8 +404,6 @@ func killProcessTree(pid int) bool {
 
             if err := process.Kill(); err != nil {
                 logger.Printf("Failed to send SIGKILL to process %d: %v", p, err)
-            } else {
-                logger.Printf("Sent SIGKILL to process %d", p)
             }
         }
 
@@ -422,7 +417,7 @@ func killProcessTree(pid int) bool {
         }
 
         if len(finalAlive) > 0 {
-            logger.Printf("Warning: Still %d processes cannot be closed: %v", len(finalAlive), finalAlive)
+            logger.Printf("Warning: Still %d processes cannot be closed", len(finalAlive))
             return false
         }
     }
@@ -476,7 +471,6 @@ func stopServiceWithTimeout(serviceName string) {
     // 创建超时上下文
     timeoutChan := time.After(ServiceStopTimeout)
     doneChan := make(chan bool, 1)
-    forceKilledChan := make(chan bool, 1)
 
     // 启动停止goroutine
     go func() {
@@ -495,15 +489,6 @@ func stopServiceWithTimeout(serviceName string) {
     case <-timeoutChan:
         logger.Printf("[%s] ⚠ Shutdown timeout after %v, forcing kill...", serviceName, ServiceStopTimeout)
         forceKillService(serviceName)
-        forceKilledChan <- true
-    }
-
-    // 等待强制杀死完成
-    select {
-    case <-forceKilledChan:
-        logger.Printf("[%s] ✗ Service force killed after timeout", serviceName)
-    default:
-        // 正常关闭，不需要处理
     }
 }
 
@@ -567,8 +552,18 @@ func stopService(serviceName string) bool {
     // 清理PID文件
     cleanupPIDFile(status)
 
+    // 对于monitor模式，还需要等待cmd结束
+    if status.Service.MonitorMode == "monitor" && status.Cmd != nil && status.Cmd.Process != nil {
+        // 等待命令结束，避免僵尸进程
+        go func(cmd *exec.Cmd) {
+            cmd.Wait()
+            logger.Printf("[%s] Command process waited", serviceName)
+        }(status.Cmd)
+    }
+
     status.IsRunning = false
     status.PID = 0
+    status.Cmd = nil
 
     shutdownTime := time.Since(startTime)
     if stopSuccess {
@@ -610,6 +605,7 @@ func executeStopCommand(serviceName string, status *ServiceStatus) bool {
     case <-time.After(timeout):
         logger.Printf("[%s] Stop command timeout (exceeded %v), terminating command process", serviceName, timeout)
         cmd.Process.Kill()
+        cmd.Wait() // 等待进程结束，避免僵尸进程
         return false
     }
 }
@@ -652,6 +648,17 @@ func forceKillService(serviceName string) {
         // 再杀死主进程
         cmd = exec.Command("kill", "-9", strconv.Itoa(status.PID))
         cmd.Run()
+
+        // 对于monitor模式，还需要等待cmd结束
+        if status.Service.MonitorMode == "monitor" && status.Cmd != nil && status.Cmd.Process != nil {
+            // 强制杀死cmd进程
+            status.Cmd.Process.Kill()
+            // 等待进程结束，避免僵尸进程
+            go func(cmd *exec.Cmd) {
+                cmd.Wait()
+                logger.Printf("[%s] Force killed command process waited", serviceName)
+            }(status.Cmd)
+        }
     }
 
     // 强制移除PID文件
@@ -661,6 +668,7 @@ func forceKillService(serviceName string) {
 
     status.IsRunning = false
     status.PID = 0
+    status.Cmd = nil
     logger.Printf("[%s] ✗ Service force killed", serviceName)
 }
 
@@ -986,6 +994,9 @@ func startService(serviceName string) {
     cmd.Env = env
     cmd.Dir = status.Service.WorkDir
 
+    // 保存cmd引用，用于后续等待
+    status.Cmd = cmd
+
     // 对于monitor模式，设置进程组以便后续管理
     if status.Service.MonitorMode == "monitor" {
         cmd.SysProcAttr = &syscall.SysProcAttr{
@@ -1034,7 +1045,9 @@ func startService(serviceName string) {
         }
 
         go func() {
-            cmd.Wait()
+            // 等待命令结束，避免僵尸进程
+            err := cmd.Wait()
+
             status.mutex.Lock()
             status.IsRunning = false
             status.mutex.Unlock()
@@ -1049,7 +1062,11 @@ func startService(serviceName string) {
                 go startService(serviceName)
             } else {
                 shutdownMutex.RUnlock()
-                logger.Printf("[%s] Service exited during shutdown", serviceName)
+                if err != nil {
+                    logger.Printf("[%s] Service exited during shutdown with error: %v", serviceName, err)
+                } else {
+                    logger.Printf("[%s] Service exited during shutdown", serviceName)
+                }
             }
         }()
     } else {
@@ -1058,6 +1075,16 @@ func startService(serviceName string) {
             logger.Printf("[%s] Failed to start service: %v", serviceName, err)
             return
         }
+
+        // 对于self模式，启动一个goroutine来等待sh进程，避免僵尸进程
+        go func() {
+            err := cmd.Wait()
+            if err != nil {
+                logger.Printf("[%s] Shell process exited with error: %v", serviceName, err)
+            } else {
+                logger.Printf("[%s] Shell process exited successfully", serviceName)
+            }
+        }()
 
         // 等待服务写入PID文件
         logger.Printf("[%s] Waiting for PID file: %s", serviceName, status.Service.PIDFile)

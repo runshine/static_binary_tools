@@ -38,7 +38,7 @@ def graceful_exit(signum, frame):
 
 
 def start_nacos():
-    setup_nacos_server()
+    setup_nacos_server(server_ip=UPSTREAM_SERVER,server_port=8848,heartbeat_time=5)
     ttyd_thread = threading.Thread(target=start_ttyd_service)
     ttyd_thread.start()
     sshd_thread = threading.Thread(target=start_openssh_service)
