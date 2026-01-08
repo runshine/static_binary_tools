@@ -45,7 +45,7 @@ type ServiceConfig struct {
     StdoutLog    string   `json:"stdout_log"`
     StderrLog    string   `json:"stderr_log"`
     WorkDir      string   `json:"work_dir"`
-    MonitorMode  string   `json:"monitor_mode"`
+    MonitorMode  string   `json:"monitor_mode"`  // "self" 或 "monitor"
     CheckInterval int     `json:"check_interval"`
     MaxFailures  int      `json:"max_failures"`
     Description  string   `json:"description"`
@@ -54,33 +54,35 @@ type ServiceConfig struct {
 
 // 服务运行状态
 type ServiceStatus struct {
-    Service     *ServiceConfig
-    Process     *os.Process
-    PID         int
-    StartTime   time.Time
-    FailCount   int
-    IsRunning   bool
-    LastCheck   time.Time
-    mutex       sync.RWMutex
+    Service      *ServiceConfig
+    Process      *os.Process
+    Cmd          *exec.Cmd          // 对于monitor模式，保存cmd对象
+    PID          int
+    StartTime    time.Time
+    FailCount    int
+    IsRunning    bool
+    LastCheck    time.Time
+    StopChan     chan bool         // 用于通知监控goroutine停止
+    mutex        sync.RWMutex
 }
 
 // 全局变量
 var (
     // 版本号使用日期格式：YYYYMMDD.HHMMSS
-    BuildVersion = time.Now().Format("20060107.210405")
+    BuildVersion = time.Now().Format("20060102.150405")
 
-    configFile  = flag.String("config", "monitor.ini", "配置文件路径")
-    workspace   = flag.String("workspace", "", "工作空间目录")
-    projectID   = flag.String("project-id", "", "项目ID")
-    serverAddr  = flag.String("server-addr", "", "服务器地址")
-    serverPort  = flag.String("server-port", "", "服务器端口")
-    uuidFlag    = flag.String("uuid", "", "Agent UUID")
-    logLevel    = flag.String("log-level", "info", "日志级别")
-    logPath     = flag.String("log-path", "", "日志目录")
-    foreground  = flag.Bool("foreground", false, "在前台运行")
-    versionFlag = flag.Bool("version", false, "显示版本信息")
+    configFile   = flag.String("config", "monitor.ini", "配置文件路径")
+    workspace    = flag.String("workspace", "", "工作空间目录")
+    projectID    = flag.String("project-id", "", "项目ID")
+    serverAddr   = flag.String("server-addr", "", "服务器地址")
+    serverPort   = flag.String("server-port", "", "服务器端口")
+    uuidFlag     = flag.String("uuid", "", "Agent UUID")
+    logLevel     = flag.String("log-level", "info", "日志级别")
+    logPath      = flag.String("log-path", "", "日志目录")
+    foreground   = flag.Bool("foreground", false, "在前台运行")
+    versionFlag  = flag.Bool("version", false, "显示版本信息")
     enableCgroup = flag.Bool("enable-cgroup", true, "启用cgroup限制")
-    cgroupName  = flag.String("cgroup-name", "sothothv2_agent", "cgroup名称")
+    cgroupName   = flag.String("cgroup-name", "sothothv2_agent", "cgroup名称")
 
     monitorConfig MonitorConfig
     services      map[string]*ServiceStatus
@@ -99,7 +101,7 @@ var (
 const (
     DefaultCheckInterval = 10
     DefaultMaxFailures = 6
-    ServiceStopTimeout = 10 * time.Second  // 修改为10秒
+    ServiceStopTimeout = 10 * time.Second  // 单个服务最大退出时长
 )
 
 func init() {
@@ -291,7 +293,6 @@ func stopServiceWithTimeout(serviceName string) {
     // 创建超时上下文
     timeoutChan := time.After(ServiceStopTimeout)
     doneChan := make(chan bool, 1)
-    forceKilledChan := make(chan bool, 1)
 
     // 启动停止goroutine
     go func() {
@@ -306,19 +307,9 @@ func stopServiceWithTimeout(serviceName string) {
     case <-timeoutChan:
         logger.Printf("[%s] ⚠ Shutdown timeout after %v, forcing kill...", serviceName, ServiceStopTimeout)
         forceKillService(serviceName)
-        forceKilledChan <- true
-    }
-
-    // 等待强制杀死完成
-    select {
-    case <-forceKilledChan:
-        logger.Printf("[%s] ✗ Service force killed after timeout", serviceName)
-    default:
-        // 正常关闭，不需要处理
     }
 }
 
-// 停止单个服务
 // 停止单个服务
 func stopService(serviceName string) bool {
     startTime := time.Now()
@@ -345,28 +336,29 @@ func stopService(serviceName string) bool {
     // 记录停止前的状态
     originalPID := status.PID
     logger.Printf("[%s] Current PID: %d", serviceName, originalPID)
+    logger.Printf("[%s] Monitor mode: %s", serviceName, status.Service.MonitorMode)
 
-    // 创建一个通道用于控制停止命令的执行
-    stopDone := make(chan bool, 1)
+    // 对于monitor模式，我们需要停止监控goroutine
+    if status.Service.MonitorMode == "monitor" && status.StopChan != nil {
+        logger.Printf("[%s] Stopping monitor goroutine...", serviceName)
+        close(status.StopChan)
+        // 等待一小段时间让goroutine退出
+        time.Sleep(100 * time.Millisecond)
+    }
 
     // 如果有停止命令，使用停止命令
     if status.Service.StopCmd != "" {
         logger.Printf("[%s] Using stop command: %s", serviceName, status.Service.StopCmd)
+        cmd := exec.Command("sh", "-c", status.Service.StopCmd)
+        cmd.Dir = status.Service.WorkDir
 
-        go func() {
-            cmd := exec.Command("sh", "-c", status.Service.StopCmd)
-            cmd.Dir = status.Service.WorkDir
+        // 设置超时
+        cmd.Stdout = os.Stdout
+        cmd.Stderr = os.Stderr
 
-            // 设置超时
-            cmd.Stdout = os.Stdout
-            cmd.Stderr = os.Stderr
-
-            if err := cmd.Start(); err != nil {
-                logger.Printf("[%s] Failed to start stop command: %v", serviceName, err)
-                stopDone <- false
-                return
-            }
-
+        if err := cmd.Start(); err != nil {
+            logger.Printf("[%s] Failed to start stop command: %v", serviceName, err)
+        } else {
             // 等待命令完成，最多等待5秒
             timeout := 5 * time.Second
             done := make(chan error, 1)
@@ -381,28 +373,31 @@ func stopService(serviceName string) bool {
                 } else {
                     logger.Printf("[%s] Stop command completed successfully", serviceName)
                 }
-                stopDone <- true
             case <-time.After(timeout):
-                logger.Printf("[%s] Stop command timeout after %v, killing...", serviceName, timeout)
+                logger.Printf("[%s] Stop command timeout after %v", serviceName, timeout)
                 cmd.Process.Kill()
-                stopDone <- false
             }
-        }()
-
-        // 等待停止命令完成
-        select {
-        case success := <-stopDone:
-            if !success {
-                logger.Printf("[%s] Stop command failed, proceeding to kill", serviceName)
-            }
-        case <-time.After(6 * time.Second):
-            logger.Printf("[%s] Stop command timed out, proceeding to kill", serviceName)
         }
     }
 
-    // 直接杀死进程（无论是否有停止命令或停止命令是否成功）
+    // 对于monitor模式，直接杀死由monitor管理的进程
     killSuccess := false
-    if status.PID > 0 {
+    if status.Service.MonitorMode == "monitor" && status.Cmd != nil && status.Cmd.Process != nil {
+        logger.Printf("[%s] Killing monitor-managed process", serviceName)
+        if err := status.Cmd.Process.Kill(); err != nil {
+            logger.Printf("[%s] Failed to kill monitor-managed process: %v", serviceName, err)
+        } else {
+            // 等待进程退出
+            for i := 0; i < 3; i++ {
+                if !isProcessRunning(status.PID) {
+                    killSuccess = true
+                    break
+                }
+                time.Sleep(1 * time.Second)
+            }
+        }
+    } else if status.PID > 0 {
+        // 对于self模式，直接杀死进程
         logger.Printf("[%s] Sending SIGTERM to PID %d", serviceName, status.PID)
 
         process, err := os.FindProcess(status.PID)
@@ -444,8 +439,12 @@ func stopService(serviceName string) bool {
         }
     }
 
+    // 重置状态
     status.IsRunning = false
     status.PID = 0
+    status.Process = nil
+    status.Cmd = nil
+    status.StopChan = nil
 
     shutdownTime := time.Since(startTime)
     if killSuccess || originalPID <= 0 {
@@ -472,7 +471,10 @@ func forceKillService(serviceName string) {
     status.mutex.Lock()
     defer status.mutex.Unlock()
 
-    if status.PID > 0 {
+    // 对于monitor模式，使用Cmd对象杀死进程
+    if status.Service.MonitorMode == "monitor" && status.Cmd != nil && status.Cmd.Process != nil {
+        status.Cmd.Process.Kill()
+    } else if status.PID > 0 {
         process, err := os.FindProcess(status.PID)
         if err == nil {
             // 先尝试SIGKILL
@@ -493,8 +495,18 @@ func forceKillService(serviceName string) {
         os.Remove(status.Service.PIDFile)
     }
 
+    // 清理监控goroutine
+    if status.StopChan != nil {
+        close(status.StopChan)
+    }
+
+    // 重置状态
     status.IsRunning = false
     status.PID = 0
+    status.Process = nil
+    status.Cmd = nil
+    status.StopChan = nil
+
     logger.Printf("[%s] ✗ Service force killed", serviceName)
 }
 
@@ -738,6 +750,7 @@ func loadServiceConfig(filename string) {
         IsRunning: false,
         FailCount: 0,
         LastCheck: time.Now(),
+        StopChan:  make(chan bool, 1),
     }
 
     serviceMutex.Lock()
@@ -771,8 +784,6 @@ func startService(serviceName string) {
     if !exists {
         return
     }
-
-    logger.Printf("[%s] Starting service...", serviceName)
 
     status.mutex.Lock()
     defer status.mutex.Unlock()
@@ -831,7 +842,6 @@ func startService(serviceName string) {
     logger.Printf("[%s] Monitor mode: %s", serviceName, status.Service.MonitorMode)
 
     // 根据监控模式处理PID文件
-    // 在monitor模式下，修改goroutine部分：
     if status.Service.MonitorMode == "monitor" {
         logger.Printf("[%s] Running in foreground (monitor mode)", serviceName)
         if err := cmd.Start(); err != nil {
@@ -842,6 +852,7 @@ func startService(serviceName string) {
         pid := cmd.Process.Pid
         status.PID = pid
         status.Process = cmd.Process
+        status.Cmd = cmd
 
         // 写入PID文件
         if err := ioutil.WriteFile(status.Service.PIDFile,
@@ -851,41 +862,40 @@ func startService(serviceName string) {
             logger.Printf("[%s] PID written to: %s", serviceName, status.Service.PIDFile)
         }
 
-        // 创建一个通道来控制goroutine的退出
-        processExitChan := make(chan bool, 1)
-
-        go func() {
-            cmd.Wait()
-            processExitChan <- true
-
-            status.mutex.Lock()
-            status.IsRunning = false
-            status.mutex.Unlock()
-
-            // 检查是否正在关闭
-            shutdownMutex.RLock()
-            if !isShuttingDown {
-                shutdownMutex.RUnlock()
-                logger.Printf("[%s] Service exited unexpectedly, will restart in 5 seconds", serviceName)
-                time.Sleep(5 * time.Second)
-                // 使用新的goroutine重启，避免阻塞
-                go startService(serviceName)
-            } else {
-                shutdownMutex.RUnlock()
-                logger.Printf("[%s] Service exited during shutdown", serviceName)
-            }
-        }()
-
-        // 设置一个超时监控goroutine
-        go func() {
+        // 启动goroutine监控进程状态
+        go func(s *ServiceStatus, name string) {
+            // 等待进程退出或收到停止信号
             select {
-            case <-processExitChan:
-                // 正常退出
-            case <-time.After(30 * time.Second):
-                // 30秒后如果goroutine还在，记录警告
-                logger.Printf("[%s] Warning: process monitoring goroutine still running after 30s", serviceName)
+            case <-s.StopChan:
+                logger.Printf("[%s] Monitor goroutine received stop signal", name)
+                return
+            case <-func() chan bool {
+                done := make(chan bool, 1)
+                go func() {
+                    cmd.Wait()
+                    done <- true
+                }()
+                return done
+            }():
+                // 进程退出
+                s.mutex.Lock()
+                s.IsRunning = false
+                s.mutex.Unlock()
+
+                // 检查是否正在关闭
+                shutdownMutex.RLock()
+                if !isShuttingDown {
+                    shutdownMutex.RUnlock()
+                    logger.Printf("[%s] Service exited unexpectedly, will restart in 5 seconds", name)
+                    time.Sleep(5 * time.Second)
+                    // 使用新的goroutine重启，避免阻塞
+                    go startService(name)
+                } else {
+                    shutdownMutex.RUnlock()
+                    logger.Printf("[%s] Service exited during shutdown", name)
+                }
             }
-        }()
+        }(status, serviceName)
     } else {
         logger.Printf("[%s] Running in background (self mode)", serviceName)
         if err := cmd.Start(); err != nil {
@@ -901,6 +911,7 @@ func startService(serviceName string) {
                 var pid int
                 fmt.Sscanf(string(pidData), "%d", &pid)
                 status.PID = pid
+                status.Process, _ = os.FindProcess(pid)
                 logger.Printf("[%s] Got PID from file: %d", serviceName, pid)
                 break
             }
@@ -926,16 +937,23 @@ func checkServiceStatus() {
 
     for serviceName, status := range services {
         go func(name string, s *ServiceStatus) {
-            s.mutex.Lock()
+            s.mutex.RLock()
 
             // 检查是否正在关闭
             shutdownMutex.RLock()
             if isShuttingDown {
                 shutdownMutex.RUnlock()
-                s.mutex.Unlock()
+                s.mutex.RUnlock()
                 return
             }
             shutdownMutex.RUnlock()
+
+            // 对于monitor模式，我们不需要检查PID，因为进程是在前台运行的
+            // 如果进程退出，监控goroutine会处理重启
+            if s.Service.MonitorMode == "monitor" {
+                s.mutex.RUnlock()
+                return
+            }
 
             // 检查进程是否运行
             running := isProcessRunning(s.PID)
@@ -946,8 +964,6 @@ func checkServiceStatus() {
                 }
                 s.IsRunning = true
                 s.FailCount = 0
-                s.LastCheck = time.Now()
-                s.mutex.Unlock()
             } else {
                 s.FailCount++
                 s.IsRunning = false
@@ -958,14 +974,15 @@ func checkServiceStatus() {
                 // 检查是否达到最大失败次数
                 if s.FailCount >= s.Service.MaxFailures {
                     // 释放锁后再重启，避免死锁
-                    s.mutex.Unlock()
+                    s.mutex.RUnlock()
                     logger.Printf("[%s] Max failures reached, restarting...", name)
                     go restartService(name) // 使用goroutine避免阻塞
-                } else {
-                    s.LastCheck = time.Now()
-                    s.mutex.Unlock()
+                    return
                 }
             }
+
+            s.LastCheck = time.Now()
+            s.mutex.RUnlock()
         }(serviceName, status)
     }
 }
@@ -982,42 +999,6 @@ func isProcessRunning(pid int) bool {
 
     err = process.Signal(syscall.Signal(0))
     return err == nil
-}
-
-// 检查服务状态详情
-func debugServiceStatus(serviceName string) {
-    serviceMutex.RLock()
-    status, exists := services[serviceName]
-    serviceMutex.RUnlock()
-
-    if !exists {
-        logger.Printf("[DEBUG] Service %s not found", serviceName)
-        return
-    }
-
-    status.mutex.RLock()
-    defer status.mutex.RUnlock()
-
-    logger.Printf("[DEBUG] Service: %s", serviceName)
-    logger.Printf("[DEBUG]   IsRunning: %v", status.IsRunning)
-    logger.Printf("[DEBUG]   PID: %d", status.PID)
-    logger.Printf("[DEBUG]   FailCount: %d/%d", status.FailCount, status.Service.MaxFailures)
-    logger.Printf("[DEBUG]   LastCheck: %v", time.Since(status.LastCheck))
-    logger.Printf("[DEBUG]   MonitorMode: %s", status.Service.MonitorMode)
-
-    // 检查进程是否存在
-    if status.PID > 0 {
-        running := isProcessRunning(status.PID)
-        logger.Printf("[DEBUG]   Process running: %v", running)
-
-        // 检查PID文件是否存在
-        if _, err := os.Stat(status.Service.PIDFile); err == nil {
-            data, err := ioutil.ReadFile(status.Service.PIDFile)
-            if err == nil {
-                logger.Printf("[DEBUG]   PID file content: %s", string(data))
-            }
-        }
-    }
 }
 
 func restartService(serviceName string) {
@@ -1053,7 +1034,7 @@ func restartService(serviceName string) {
 func startMonitorCron() {
     cronScheduler = cron.New()
 
-    // 每10秒检查一次服务状态
+    // 每10秒检查一次服务状态（只检查self模式的服务）
     cronScheduler.AddFunc("@every 10s", func() {
         checkServiceStatus()
     })
@@ -1086,12 +1067,19 @@ func printStatusReport() {
     defer serviceMutex.RUnlock()
 
     runningCount := 0
-    for _, status := range services {
+    for name, status := range services {
         status.mutex.RLock()
-        if status.IsRunning {
+        mode := status.Service.MonitorMode
+        isRunning := status.IsRunning
+        pid := status.PID
+        status.mutex.RUnlock()
+
+        if isRunning {
             runningCount++
         }
-        status.mutex.RUnlock()
+
+        logger.Printf("  [%s] Mode: %s, Running: %v, PID: %d",
+            name, mode, isRunning, pid)
     }
 
     logger.Printf("Services running: %d/%d", runningCount, len(services))
