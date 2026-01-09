@@ -70,26 +70,28 @@ var (
     // 版本号使用日期格式：YYYYMMDD.HHMMSS
     BuildVersion = time.Now().Format("20060102.150405")
 
-    configFile  = flag.String("config", "monitor.ini", "配置文件路径")
-    workspace   = flag.String("workspace", "", "工作空间目录")
-    projectID   = flag.String("project-id", "", "项目ID")
-    serverAddr  = flag.String("server-addr", "", "服务器地址")
-    serverPort  = flag.String("server-port", "", "服务器端口")
-    uuidFlag    = string(*uuidFlag)
-    logLevel    = flag.String("log-level", "info", "日志级别")
-    logPath     = flag.String("log-path", "", "日志目录")
-    foreground  = flag.Bool("foreground", false, "在前台运行")
-    versionFlag = flag.Bool("version", false, "显示版本信息")
+    // 命令行参数
+    configFile   = flag.String("config", "monitor.ini", "配置文件路径")
+    workspace    = flag.String("workspace", "", "工作空间目录")
+    projectID    = flag.String("project-id", "", "项目ID")
+    serverAddr   = flag.String("server-addr", "", "服务器地址")
+    serverPort   = flag.String("server-port", "", "服务器端口")
+    uuidFlag     = flag.String("uuid", "", "Agent UUID")
+    logLevel     = flag.String("log-level", "info", "日志级别")
+    logPath      = flag.String("log-path", "", "日志目录")
+    foreground   = flag.Bool("foreground", false, "在前台运行")
+    versionFlag  = flag.Bool("version", false, "显示版本信息")
     enableCgroup = flag.Bool("enable-cgroup", true, "启用cgroup限制")
-    cgroupName  = flag.String("cgroup-name", "sothothv2_agent", "cgroup名称")
+    cgroupName   = flag.String("cgroup-name", "sothothv2_agent", "cgroup名称")
 
+    // 配置和状态
     monitorConfig MonitorConfig
     services      map[string]*ServiceStatus
     serviceMutex  sync.RWMutex
     logger        *log.Logger
     cronScheduler *cron.Cron
 
-    // 新增全局变量
+    // 关闭控制
     serviceStartOrder []string          // 服务启动顺序
     isShuttingDown    bool              // 是否正在关闭
     shutdownMutex     sync.RWMutex      // 关闭状态锁
