@@ -1,4 +1,5 @@
 import os
+import sys
 import threading
 from common_utils import *
 from flask import Flask, jsonify, request, send_file, abort, redirect
@@ -34,7 +35,9 @@ def start_rpcapd_service():
 
 def graceful_exit(signum, frame):
     global server_should_stop
+    logging.getLogger().warning(f"start graceful_exit, recv signum: {signum}" )
     server_should_stop = True
+    sys.exit(0)
 
 
 def start_nacos():
