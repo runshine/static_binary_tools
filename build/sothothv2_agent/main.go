@@ -50,6 +50,7 @@ type ServiceConfig struct {
     MaxFailures  int      `json:"max_failures"`
     Description  string   `json:"description"`
     DependsOn    []string `json:"depends_on"`
+    Shell        bool     `json:"shell"` // 新增：是否使用shell启动，默认true
 }
 
 // 服务运行状态
@@ -97,6 +98,10 @@ var (
     shutdownMutex     sync.RWMutex      // 关闭状态锁
     shutdownWG        sync.WaitGroup    // 等待所有服务关闭
     signalChan        chan os.Signal    // 信号通道
+
+    // 新增：进程互斥锁相关
+    lockFile     *os.File
+    lockFilePath string
 )
 
 const (
@@ -121,6 +126,12 @@ func main() {
         fmt.Printf("Build Time: %s\n", time.Now().Format("2006-01-02 15:04:05"))
         return
     }
+
+    // 新增：创建并获取进程锁，防止重复拉起
+    if err := acquireProcessLock(); err != nil {
+        logger.Fatalf("Failed to acquire process lock: %v", err)
+    }
+    defer releaseProcessLock()
 
     // 检查配置文件是否存在
     if _, err := os.Stat(*configFile); err == nil {
@@ -579,7 +590,18 @@ func stopService(serviceName string) bool {
 
 // 执行停止命令
 func executeStopCommand(serviceName string, status *ServiceStatus) bool {
-    cmd := exec.Command("sh", "-c", status.Service.StopCmd)
+    var cmd *exec.Cmd
+    if status.Service.Shell {
+        cmd = exec.Command("sh", "-c", status.Service.StopCmd)
+    } else {
+        parts := strings.Fields(status.Service.StopCmd)
+        if len(parts) == 0 {
+            logger.Printf("[%s] Empty stop command", serviceName)
+            return false
+        }
+        cmd = exec.Command(parts[0], parts[1:]...)
+    }
+
     cmd.Dir = status.Service.WorkDir
 
     // 设置超时
@@ -663,9 +685,14 @@ func forceKillService(serviceName string) {
         }
     }
 
-    // 强制移除PID文件
-    if _, err := os.Stat(status.Service.PIDFile); err == nil {
-        os.Remove(status.Service.PIDFile)
+    // 强制移除PID文件（仅当PID文件中的PID匹配当前进程时）
+    if status.Service.PIDFile != "" {
+        if pidData, err := ioutil.ReadFile(status.Service.PIDFile); err == nil {
+            filePID, err := strconv.Atoi(strings.TrimSpace(string(pidData)))
+            if err == nil && filePID == status.PID {
+                os.Remove(status.Service.PIDFile)
+            }
+        }
     }
 
     status.IsRunning = false
@@ -705,6 +732,86 @@ func printShutdownStatistics(startTime time.Time) {
     }
 
     logger.Println("=========================================")
+}
+
+// ==================== 进程锁管理 ====================
+
+// 获取进程锁
+func acquireProcessLock() error {
+    // 获取可执行文件所在目录
+    exePath, err := os.Executable()
+    if err != nil {
+        return fmt.Errorf("failed to get executable path: %v", err)
+    }
+
+    exeDir := filepath.Dir(exePath)
+    runDir := filepath.Join(exeDir, "..", "var", "run")
+
+    // 创建run目录
+    if err := os.MkdirAll(runDir, 0755); err != nil {
+        return fmt.Errorf("failed to create run directory: %v", err)
+    }
+
+    // 构建锁文件路径
+    lockFileName := filepath.Base(exePath) + ".lock"
+    lockFilePath = filepath.Join(runDir, lockFileName)
+
+    // 尝试创建并锁定文件
+    lockFile, err = os.OpenFile(lockFilePath, os.O_CREATE|os.O_WRONLY, 0644)
+    if err != nil {
+        return fmt.Errorf("failed to create lock file: %v", err)
+    }
+
+    // 尝试获取文件锁（非阻塞模式）
+    err = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+    if err != nil {
+        lockFile.Close()
+
+        // 读取已存在的锁文件中的PID
+        if pidData, err := ioutil.ReadFile(lockFilePath); err == nil {
+            pidStr := strings.TrimSpace(string(pidData))
+            if pid, err := strconv.Atoi(pidStr); err == nil {
+                // 检查该PID是否还在运行
+                if isProcessRunning(pid) {
+                    return fmt.Errorf("another instance is already running (PID: %d)", pid)
+                } else {
+                    // 进程已不存在，清理锁文件并重试
+                    os.Remove(lockFilePath)
+                    return acquireProcessLock()
+                }
+            }
+        }
+
+        return fmt.Errorf("failed to acquire file lock: %v", err)
+    }
+
+    // 将当前PID写入锁文件
+    pid := os.Getpid()
+    if _, err := lockFile.WriteString(strconv.Itoa(pid)); err != nil {
+        releaseProcessLock()
+        return fmt.Errorf("failed to write PID to lock file: %v", err)
+    }
+
+    // 确保数据写入磁盘
+    lockFile.Sync()
+
+    logger.Printf("Process lock acquired (PID: %d, Lock file: %s)", pid, lockFilePath)
+    return nil
+}
+
+// 释放进程锁
+func releaseProcessLock() {
+    if lockFile != nil {
+        // 释放文件锁
+        syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+        lockFile.Close()
+
+        // 删除锁文件
+        if lockFilePath != "" {
+            os.Remove(lockFilePath)
+            logger.Printf("Process lock released (Lock file: %s)", lockFilePath)
+        }
+    }
 }
 
 // ==================== Cgroup管理 ====================
@@ -906,6 +1013,21 @@ func loadServiceConfig(filename string) {
         serviceConfig.Description = fmt.Sprintf("Service defined in %s", filepath.Base(filename))
     }
 
+    // 新增：设置Shell的默认值为true
+    // 由于Shell是bool类型，在JSON中不存在的字段会被解析为false
+    // 我们需要一个机制来判断这个字段是否在JSON中存在
+    // 这里我们使用一个技巧：检查JSON数据中是否包含"shell"字段
+    var jsonData map[string]interface{}
+    if err := json.Unmarshal(data, &jsonData); err == nil {
+        if _, exists := jsonData["shell"]; !exists {
+            // JSON中没有shell字段，使用默认值true
+            serviceConfig.Shell = true
+        }
+    } else {
+        // 解析失败，使用默认值true
+        serviceConfig.Shell = true
+    }
+
     // 验证必要字段
     if serviceConfig.StartCmd == "" || serviceConfig.PIDFile == "" {
         logger.Printf("Service config %s missing required fields", filename)
@@ -933,6 +1055,63 @@ func loadServiceConfig(filename string) {
 }
 
 // ==================== 服务启动 ====================
+
+// 检查并杀死已存在的进程
+func checkAndKillExistingProcess(status *ServiceStatus) error {
+    if status.Service.PIDFile == "" {
+        return nil
+    }
+
+    // 检查PID文件是否存在
+    if _, err := os.Stat(status.Service.PIDFile); os.IsNotExist(err) {
+        return nil // PID文件不存在，无需处理
+    }
+
+    // 读取PID文件
+    pidData, err := ioutil.ReadFile(status.Service.PIDFile)
+    if err != nil {
+        return fmt.Errorf("failed to read PID file: %v", err)
+    }
+
+    pidStr := strings.TrimSpace(string(pidData))
+    if pidStr == "" {
+        return fmt.Errorf("PID file is empty")
+    }
+
+    pid, err := strconv.Atoi(pidStr)
+    if err != nil {
+        return fmt.Errorf("invalid PID in PID file: %v", err)
+    }
+
+    // 检查该PID对应的进程是否在运行
+    if !isProcessRunning(pid) {
+        logger.Printf("[PID:%d] Process is not running, cleaning up PID file", pid)
+        // 清理无效的PID文件
+        os.Remove(status.Service.PIDFile)
+        return nil
+    }
+
+    logger.Printf("[PID:%d] Process is already running, attempting to kill it", pid)
+
+    // 尝试杀死进程
+    if killProcessTree(pid) {
+        logger.Printf("[PID:%d] Successfully killed existing process", pid)
+
+        // 等待一段时间确保进程完全退出
+        time.Sleep(500 * time.Millisecond)
+
+        // 再次检查进程是否还在运行
+        if isProcessRunning(pid) {
+            return fmt.Errorf("process %d is still running after kill attempt", pid)
+        }
+
+        // 清理PID文件
+        os.Remove(status.Service.PIDFile)
+        return nil
+    } else {
+        return fmt.Errorf("failed to kill process %d", pid)
+    }
+}
 
 func startAllServices() {
     logger.Println("========== Starting All Services ==========")
@@ -970,6 +1149,12 @@ func startService(serviceName string) {
     }
     shutdownMutex.RUnlock()
 
+    // 新增：检查PID文件对应的进程是否存在，如果存在则先杀死
+    if err := checkAndKillExistingProcess(status); err != nil {
+        logger.Printf("[%s] Failed to handle existing process: %v", serviceName, err)
+        // 继续尝试启动，不返回错误
+    }
+
     // 检查依赖的服务是否已启动
     if len(status.Service.DependsOn) > 0 {
         logger.Printf("[%s] Checking dependencies: %v", serviceName, status.Service.DependsOn)
@@ -991,8 +1176,23 @@ func startService(serviceName string) {
     env = append(env, fmt.Sprintf("LOG_PATH=%s", monitorConfig.LogPath))
     env = append(env, fmt.Sprintf("BUILD_VERSION=%s", BuildVersion))
 
-    // 执行启动命令
-    cmd := exec.Command("sh", "-c", status.Service.StartCmd)
+    // 执行启动命令 - 根据Shell参数决定是否使用shell
+    var cmd *exec.Cmd
+    if status.Service.Shell {
+        cmd = exec.Command("sh", "-c", status.Service.StartCmd)
+        logger.Printf("[%s] Using shell to start service", serviceName)
+    } else {
+        // 不使用shell，直接执行命令和参数
+        // 注意：这里需要将命令字符串拆分为命令和参数
+        parts := strings.Fields(status.Service.StartCmd)
+        if len(parts) == 0 {
+            logger.Printf("[%s] Empty start command", serviceName)
+            return
+        }
+        cmd = exec.Command(parts[0], parts[1:]...)
+        logger.Printf("[%s] Starting without shell", serviceName)
+    }
+
     cmd.Env = env
     cmd.Dir = status.Service.WorkDir
 
@@ -1024,6 +1224,7 @@ func startService(serviceName string) {
 
     logger.Printf("[%s] Working directory: %s", serviceName, status.Service.WorkDir)
     logger.Printf("[%s] Monitor mode: %s", serviceName, status.Service.MonitorMode)
+    logger.Printf("[%s] Shell mode: %v", serviceName, status.Service.Shell)
 
     // 根据监控模式处理PID文件
     if status.Service.MonitorMode == "monitor" {
