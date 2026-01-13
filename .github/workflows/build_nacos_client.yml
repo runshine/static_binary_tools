@@ -5,7 +5,7 @@ on:
       - '**'
     paths:
       - .github/workflows/build_nacos_client.yml
-      - build/nacos_client/*
+      - build/nacos_client/**
       - build/common/*
       - Dockerfile
 
