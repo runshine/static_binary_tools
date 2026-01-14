@@ -3,9 +3,6 @@ import socket
 import re
 import subprocess
 import sys
-import os
-import logging
-from logging.handlers import RotatingFileHandler
 import signal
 import fcntl
 import json
@@ -13,6 +10,9 @@ from urllib.parse import urlencode
 import requests
 import time
 import struct
+import logging
+import os
+from logging.handlers import RotatingFileHandler
 
 
 def get_ipv4_addresses():
@@ -98,6 +98,11 @@ def setup_logger(log_file):
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)  # 设置默认日志级别为INFO
 
+    # 如果目录不存在则创建
+    log_dir = os.path.dirname(log_file)
+    if log_dir and not os.path.exists(log_dir):
+        os.makedirs(log_dir)
+
     # 创建文件处理器 - 限制单个文件最大5MB，保留3个备份
     file_handler = RotatingFileHandler(
         filename=log_file,
@@ -105,16 +110,24 @@ def setup_logger(log_file):
         backupCount=3,          # 保留3个备份文件
         encoding='utf-8'
     )
+
+    # 创建控制台处理器
+    console_handler = logging.StreamHandler()
+
     # 创建日志格式
     formatter = logging.Formatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
 
-    # 应用格式到处理器
+    # 应用格式到两个处理器
     file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+
     # 添加处理器到记录器
     logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+
     return logger
 
 
@@ -246,7 +259,7 @@ def get_sothoth_ip_address():
     ip_address = get_ip_by_device("tap-sothoth")
     while not is_valid_ipv4(ip_address):
         logging.getLogger().warning("wait tap-sothoth avaiable")
-        time.sleep(5)
+        time.sleep(10)
         ip_address = get_ip_by_device("tap-sothoth")
     return ip_address
 

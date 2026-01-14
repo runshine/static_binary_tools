@@ -1,0 +1,17 @@
+{
+  "port": 8080,
+  "host": "0.0.0.0",
+  "api_prefix": "/api",
+  "token": "your_secure_token_here",
+  "daemon": false,
+  "log_dir": "./logs",
+  "log_level": "INFO",
+  "compose_root": "./services",
+  "docker_compose_bin": "/usr/local/bin/docker-compose",
+  "docker_bin": "/usr/bin/docker",
+  "docker_socket": "unix:///var/run/docker.sock",
+  "max_upload_size": 104857600,
+  "database_file": "./docker_manager.db",
+  "nacos_server_url": "http://192.168.12.190",
+  "root_dir": "/tmp/"
+}
