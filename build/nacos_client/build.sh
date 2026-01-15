@@ -8,7 +8,7 @@ apt update && apt-get -y install curl wget unzip nodejs npm
 
 VERSION="latest"
 
-cd /build/nacos_client_frontend
+cd /build/frontend
 if [ -f package-lock.json ]; then npm ci; else npm install; fi
 npm run build
 cp -R dist ../nacos/static
