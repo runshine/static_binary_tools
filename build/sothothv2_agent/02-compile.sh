@@ -12,7 +12,8 @@ ARCHS=("x86_64" "aarch64" "armhf" "armel" "riscv64")
 BUILD_VERSION=$(date +"%Y%m%d.%H%M%S")
 VERSION="${BUILD_VERSION}"
 
-sed -i "s/20060107.210405/${VERSION}/g" main.go
+sed -i "s/20060102.150405/${VERSION}/g" main.go
+VERSION="latest"
 
 go mod tidy
 go mod download

@@ -1125,7 +1125,6 @@ func startAllServices() {
 
     logger.Println("==========================================")
 }
-
 func startService(serviceName string) {
     serviceMutex.RLock()
     status, exists := services[serviceName]
@@ -1134,6 +1133,19 @@ func startService(serviceName string) {
     if !exists {
         return
     }
+
+    // 检查服务是否已经在运行，避免重复启动
+    status.mutex.RLock()
+    if status.IsRunning {
+        status.mutex.RUnlock()
+        return
+    }
+    status.mutex.RUnlock()
+
+    // 添加一个启动锁，防止并发启动
+    var restartMutex sync.Mutex
+    restartMutex.Lock()
+    defer restartMutex.Unlock()
 
     logger.Printf("[%s] Starting service...", serviceName)
 
@@ -1231,6 +1243,17 @@ func startService(serviceName string) {
         logger.Printf("[%s] Running in foreground (monitor mode)", serviceName)
         if err := cmd.Start(); err != nil {
             logger.Printf("[%s] Failed to start service: %v", serviceName, err)
+
+            // 服务启动失败，等待5秒后再尝试重启
+            logger.Printf("[%s] Service start failed, will retry in 5 seconds", serviceName)
+            time.Sleep(5 * time.Second)
+
+            // 异步重启
+            go func() {
+                // 添加延迟，避免立即重启
+                time.Sleep(100 * time.Millisecond)
+                startService(serviceName)
+            }()
             return
         }
 
@@ -1247,9 +1270,20 @@ func startService(serviceName string) {
             logger.Printf("[%s] Process group ID: %d", serviceName, pid)
         }
 
+        // 创建一个通道来协调重启
+        restartChan := make(chan bool, 1)
+
         go func() {
             // 等待命令结束，避免僵尸进程
             err := cmd.Wait()
+
+            // 发送重启信号
+            select {
+            case restartChan <- true:
+                // 发送成功
+            default:
+                // 通道已满，已经有重启信号
+            }
 
             status.mutex.Lock()
             status.IsRunning = false
@@ -1260,9 +1294,28 @@ func startService(serviceName string) {
             if !isShuttingDown {
                 shutdownMutex.RUnlock()
                 logger.Printf("[%s] Service exited unexpectedly, will restart in 5 seconds", serviceName)
-                time.Sleep(5 * time.Second)
-                // 使用新的goroutine重启，避免阻塞
-                go startService(serviceName)
+
+                // 等待重启信号
+                select {
+                case <-restartChan:
+                    // 等待5秒后重启
+                    time.Sleep(5 * time.Second)
+
+                    // 再次检查是否正在关闭
+                    shutdownMutex.RLock()
+                    if !isShuttingDown {
+                        shutdownMutex.RUnlock()
+                        // 异步重启，避免阻塞
+                        go func() {
+                            time.Sleep(100 * time.Millisecond)
+                            startService(serviceName)
+                        }()
+                    } else {
+                        shutdownMutex.RUnlock()
+                    }
+                case <-time.After(6 * time.Second):
+                    // 超时，不重启
+                }
             } else {
                 shutdownMutex.RUnlock()
                 if err != nil {
@@ -1270,6 +1323,17 @@ func startService(serviceName string) {
                 } else {
                     logger.Printf("[%s] Service exited during shutdown", serviceName)
                 }
+            }
+        }()
+
+        // 启动一个goroutine来检查服务是否快速退出
+        go func() {
+            time.Sleep(1 * time.Second)
+            select {
+            case <-restartChan:
+                // 服务已经退出，重启逻辑由上面的goroutine处理
+            default:
+                // 服务还在运行
             }
         }()
     } else {
@@ -1305,8 +1369,10 @@ func startService(serviceName string) {
 
     status.IsRunning = true
     status.StartTime = time.Now()
+    status.FailCount = 0
     logger.Printf("[%s] ✓ Service started successfully", serviceName)
 }
+
 
 // ==================== 服务监控 ====================
 
@@ -1406,6 +1472,10 @@ func restartService(serviceName string) {
         return
     }
     shutdownMutex.RUnlock()
+
+    // 添加额外的重启延迟，确保至少等待5秒
+    logger.Printf("[%s] Waiting additional 4 seconds before restart...", serviceName)
+    time.Sleep(4 * time.Second)
 
     // 重新启动服务
     go startService(serviceName)
