@@ -33,12 +33,12 @@ def graceful_exit(signum, frame):
     sys.exit(0)
 
 
-def start_nacos(UPSTREAM_SERVER_URLparsed):
-    parsed = urlparse(UPSTREAM_SERVER_URLparsed)
+def start_nacos(UPSTREAM_SERVER_URL,WORKSPACE_ID):
+    parsed = urlparse(UPSTREAM_SERVER_URL)
     protocol = parsed.scheme
     host = parsed.hostname
     port = parsed.port
-    setup_nacos_server(server_ip=host,server_port=int(port),heartbeat_time=5)
+    setup_nacos_server(server_ip=host,server_port=int(port),heartbeat_time=5,workspace_id=WORKSPACE_ID)
     ttyd_thread = threading.Thread(target=start_ttyd_service)
     ttyd_thread.start()
     sshd_thread = threading.Thread(target=start_openssh_service)

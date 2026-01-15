@@ -164,19 +164,21 @@ def global_cleanup():
 g_nacos_server_ip = None
 g_nacos_server_port = None
 g_nacos_heartbeat_time = None
+g_workspace_id = None
 
-
-def setup_nacos_server(server_ip = None,server_port = None,heartbeat_time = 5):
-    global g_nacos_server_ip,g_nacos_server_port,g_nacos_heartbeat_time
+def setup_nacos_server(server_ip = None,server_port = None,heartbeat_time = 5,workspace_id = "default"):
+    global g_nacos_server_ip,g_nacos_server_port,g_nacos_heartbeat_time,g_workspace_id
     if server_port is None or server_port is None:
         ip_address = get_sothoth_ip_address()
         g_nacos_server_ip = re.findall(r"^(\d+\.\d+\.)\d+\.\d+",ip_address)[0] + "0.2"
         g_nacos_server_port = "8848"
         g_nacos_heartbeat_time = heartbeat_time
+        g_workspace_id = workspace_id
     else:
         g_nacos_server_ip = server_ip
         g_nacos_server_port = server_port
         g_nacos_heartbeat_time = heartbeat_time
+        g_workspace_id = workspace_id
     logging.getLogger().info("start setup nacos server, server is: {}:{}".format(g_nacos_server_ip,g_nacos_server_port))
 
 
@@ -284,7 +286,7 @@ def start_nacos_service(service_name,port,metadata = None, health_check_fun=None
     last_health_check_ret = True
     while True:
         ip_address = get_sothoth_ip_address()
-        service_name = "{}-{}".format(socket.gethostname(),ip_address)
+        service_name = "{}-{}-{}".format(g_workspace_id,socket.gethostname(),ip_address)
         time.sleep(g_nacos_heartbeat_time)
         if health_check_fun is not None:
             health_check_ret = health_check_fun(*args)

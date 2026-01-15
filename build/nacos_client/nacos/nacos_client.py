@@ -2659,7 +2659,7 @@ def main():
     index_file = static_dir / config.get('static_index_file', 'index.html')
     # 启动服务器
     get_sothoth_ip_address()
-    nacos_thread = threading.Thread(target=start_nacos,args=[config['nacos_server_url']])
+    nacos_thread = threading.Thread(target=start_nacos,args=[config['nacos_server_url'],config['workspace_id']])
     nacos_thread.start()
     server.run()
 
