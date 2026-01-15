@@ -1,0 +1,3 @@
+[submodule "build/nacos_client/frontend"]
+	path = build/nacos_client/frontend
+	url = https://github.com/runshine/nacos_client_frontend.git

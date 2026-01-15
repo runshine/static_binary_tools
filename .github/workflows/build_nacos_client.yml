@@ -21,6 +21,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: 'true'
+
+      - name: clean to default
+        run: sed -i 's/https:\/\/develop-agent.819819.xyz//g'   ./build/nacos_client/frontend/api.ts
+
+      - name: cat api.ts
+        run: cat ./build/nacos_client/frontend/api.ts
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3

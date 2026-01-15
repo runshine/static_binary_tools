@@ -4,12 +4,16 @@ source "$(cd `dirname $0`;pwd)/../common/prepare_dir.sh"
 source "$(cd `dirname $0`;pwd)/../common/utils_func.sh"
 source "$(cd `dirname $0`;pwd)/../common/arch_detect.sh"
 
-apt update && apt-get -y install curl wget unzip
+apt update && apt-get -y install curl wget unzip nodejs npmnodejs npm
 
 VERSION="latest"
 
-cd /build
+cd /build/nacos_client_frontend
+if [ -f package-lock.json ]; then npm ci; else npm install; fi
+npm run build
+cp -R dist ../nacos/static
 
+cd /build
 
 echo "aarch64" > nacos/.arch
 tar -czvf "${INSTALL_DIR}/nacos_client-${VERSION}-linux-aarch64.tar.gz" nacos

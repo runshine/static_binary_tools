@@ -23,8 +23,13 @@ import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
+from dataclasses import dataclass, asdict
+import psutil
+import platform
+import socket
+import mimetypes
 
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
 import docker
 from docker.errors import DockerException, APIError
@@ -40,6 +45,449 @@ db_conn = None
 docker_client = None
 server_should_stop = False
 logger = None
+
+# ===================== 系统信息收集相关类 =====================
+
+@dataclass
+class CPUInfo:
+    """CPU信息"""
+    physical_cores: int
+    logical_cores: int
+    usage_percent: float
+    model: str
+    architecture: str
+    frequency_current: float
+    frequency_max: float
+    load_average_1min: float
+    load_average_5min: float
+    load_average_15min: float
+
+@dataclass
+class MemoryInfo:
+    """内存信息"""
+    total: int
+    available: int
+    used: int
+    free: int
+    usage_percent: float
+    swap_total: int
+    swap_used: int
+    swap_free: int
+    swap_usage_percent: float
+
+@dataclass
+class DiskInfo:
+    """磁盘信息"""
+    device: str
+    mountpoint: str
+    fstype: str
+    total: int
+    used: int
+    free: int
+    usage_percent: float
+    read_bytes: int
+    write_bytes: int
+    read_count: int
+    write_count: int
+
+@dataclass
+class NetworkInterfaceInfo:
+    """网络接口信息"""
+    name: str
+    ip_address: str
+    netmask: str
+    broadcast: str
+    mac_address: str
+    is_up: bool
+    bytes_sent: int
+    bytes_recv: int
+    packets_sent: int
+    packets_recv: int
+
+@dataclass
+class ProcessInfo:
+    """进程信息"""
+    pid: int
+    name: str
+    status: str
+    cpu_percent: float
+    memory_percent: float
+    memory_rss: int
+    memory_vms: int
+    create_time: float
+    cmdline: List[str]
+
+@dataclass
+class DockerInfo:
+    """Docker信息"""
+    version: str
+    api_version: str
+    containers_total: int
+    containers_running: int
+    containers_stopped: int
+    containers_paused: int
+    images_total: int
+    images_size: int
+    volumes_total: int
+    networks_total: int
+    is_docker_available: bool
+    docker_root_dir: str
+
+@dataclass
+class SystemInfo:
+    """系统信息汇总"""
+    timestamp: str
+    hostname: str
+    os_name: str
+    os_version: str
+    os_release: str
+    kernel_version: str
+    architecture: str
+    boot_time: str
+    uptime: int
+    cpu: CPUInfo
+    memory: MemoryInfo
+    disks: List[DiskInfo]
+    network_interfaces: List[NetworkInterfaceInfo]
+    docker: DockerInfo
+    processes_top: List[ProcessInfo]
+
+@dataclass
+class AuthResult:
+    """鉴权结果"""
+    authenticated: bool
+    message: str
+    timestamp: str
+    token_provided: str
+    token_length: int
+    token_match: bool
+    client_ip: str
+    user_agent: str
+    request_method: str
+    request_path: str
+
+class SystemInfoCollector:
+    """系统信息收集器"""
+
+    def __init__(self, docker_client=None):
+        self.docker_client = docker_client
+
+    def get_system_info(self) -> SystemInfo:
+        """获取完整的系统信息"""
+        return SystemInfo(
+            timestamp=datetime.now().isoformat(),
+            hostname=self._get_hostname(),
+            os_name=self._get_os_name(),
+            os_version=self._get_os_version(),
+            os_release=self._get_os_release(),
+            kernel_version=self._get_kernel_version(),
+            architecture=self._get_architecture(),
+            boot_time=self._get_boot_time(),
+            uptime=self._get_uptime(),
+            cpu=self._get_cpu_info(),
+            memory=self._get_memory_info(),
+            disks=self._get_disks_info(),
+            network_interfaces=self._get_network_interfaces_info(),
+            docker=self._get_docker_info(),
+            processes_top=self._get_top_processes(limit=10)
+        )
+
+    def _get_hostname(self) -> str:
+        """获取主机名"""
+        return socket.gethostname()
+
+    def _get_os_name(self) -> str:
+        """获取操作系统名称"""
+        return platform.system()
+
+    def _get_os_version(self) -> str:
+        """获取操作系统版本"""
+        try:
+            if platform.system() == "Linux":
+                # 尝试读取/etc/os-release文件
+                with open('/etc/os-release', 'r') as f:
+                    lines = f.readlines()
+                    for line in lines:
+                        if line.startswith('PRETTY_NAME='):
+                            return line.split('=')[1].strip().strip('"')
+            return platform.version()
+        except:
+            return platform.version()
+
+    def _get_os_release(self) -> str:
+        """获取操作系统发行版"""
+        try:
+            if platform.system() == "Linux":
+                with open('/etc/os-release', 'r') as f:
+                    lines = f.readlines()
+                    for line in lines:
+                        if line.startswith('VERSION_ID='):
+                            return line.split('=')[1].strip().strip('"')
+        except:
+            pass
+        return ""
+
+    def _get_kernel_version(self) -> str:
+        """获取内核版本"""
+        return platform.release()
+
+    def _get_architecture(self) -> str:
+        """获取系统架构"""
+        return platform.machine()
+
+    def _get_boot_time(self) -> str:
+        """获取启动时间"""
+        boot_timestamp = psutil.boot_time()
+        return datetime.fromtimestamp(boot_timestamp).isoformat()
+
+    def _get_uptime(self) -> int:
+        """获取运行时间（秒）"""
+        boot_timestamp = psutil.boot_time()
+        return int(time.time() - boot_timestamp)
+
+    def _get_cpu_info(self) -> CPUInfo:
+        """获取CPU信息"""
+        # 获取CPU频率（需要psutil 5.6.0+）
+        freq = psutil.cpu_freq()
+        freq_current = freq.current if freq else 0
+        freq_max = freq.max if freq else 0
+
+        # 获取CPU型号（Linux特定）
+        cpu_model = "Unknown"
+        if platform.system() == "Linux":
+            try:
+                with open('/proc/cpuinfo', 'r') as f:
+                    lines = f.readlines()
+                    for line in lines:
+                        if line.startswith('model name'):
+                            cpu_model = line.split(':')[1].strip()
+                            break
+            except:
+                cpu_model = platform.processor()
+        else:
+            cpu_model = platform.processor()
+
+        # 获取平均负载（Linux特定）
+        load_avg = psutil.getloadavg() if hasattr(psutil, 'getloadavg') else (0, 0, 0)
+
+        return CPUInfo(
+            physical_cores=psutil.cpu_count(logical=False),
+            logical_cores=psutil.cpu_count(logical=True),
+            usage_percent=psutil.cpu_percent(interval=0.1),
+            model=cpu_model,
+            architecture=platform.machine(),
+            frequency_current=freq_current,
+            frequency_max=freq_max,
+            load_average_1min=load_avg[0] if len(load_avg) > 0 else 0,
+            load_average_5min=load_avg[1] if len(load_avg) > 1 else 0,
+            load_average_15min=load_avg[2] if len(load_avg) > 2 else 0
+        )
+
+    def _get_memory_info(self) -> MemoryInfo:
+        """获取内存信息"""
+        memory = psutil.virtual_memory()
+        swap = psutil.swap_memory()
+
+        return MemoryInfo(
+            total=memory.total,
+            available=memory.available,
+            used=memory.used,
+            free=memory.free,
+            usage_percent=memory.percent,
+            swap_total=swap.total,
+            swap_used=swap.used,
+            swap_free=swap.free,
+            swap_usage_percent=swap.percent
+        )
+
+    def _get_disks_info(self) -> List[DiskInfo]:
+        """获取磁盘信息"""
+        disks = []
+
+        # 获取磁盘分区信息
+        partitions = psutil.disk_partitions(all=False)
+
+        for partition in partitions:
+            try:
+                usage = psutil.disk_usage(partition.mountpoint)
+                io_counters = psutil.disk_io_counters(perdisk=True)
+
+                disk_io = io_counters.get(partition.device, None) if io_counters else None
+
+                disk_info = DiskInfo(
+                    device=partition.device,
+                    mountpoint=partition.mountpoint,
+                    fstype=partition.fstype,
+                    total=usage.total,
+                    used=usage.used,
+                    free=usage.free,
+                    usage_percent=usage.percent,
+                    read_bytes=disk_io.read_bytes if disk_io else 0,
+                    write_bytes=disk_io.write_bytes if disk_io else 0,
+                    read_count=disk_io.read_count if disk_io else 0,
+                    write_count=disk_io.write_count if disk_io else 0
+                )
+                disks.append(disk_info)
+            except Exception as e:
+                logger.warning(f"获取磁盘 {partition.mountpoint} 信息失败: {e}")
+                continue
+
+        return disks
+
+    def _get_network_interfaces_info(self) -> List[NetworkInterfaceInfo]:
+        """获取网络接口信息"""
+        interfaces = []
+
+        # 获取网络接口信息
+        addrs = psutil.net_if_addrs()
+        stats = psutil.net_if_stats()
+        io_counters = psutil.net_io_counters(pernic=True)
+
+        for interface_name, addresses in addrs.items():
+            # 获取接口状态
+            interface_stats = stats.get(interface_name, None)
+            is_up = interface_stats.isup if interface_stats else False
+
+            # 获取IP地址信息
+            ip_address = ""
+            netmask = ""
+            broadcast = ""
+            mac_address = ""
+
+            for addr in addresses:
+                if addr.family == socket.AF_INET:  # IPv4
+                    ip_address = addr.address
+                    netmask = addr.netmask
+                    broadcast = addr.broadcast
+                elif addr.family == psutil.AF_LINK:  # MAC地址
+                    mac_address = addr.address
+
+            # 获取网络IO统计
+            interface_io = io_counters.get(interface_name, None)
+
+            interface_info = NetworkInterfaceInfo(
+                name=interface_name,
+                ip_address=ip_address,
+                netmask=netmask,
+                broadcast=broadcast,
+                mac_address=mac_address,
+                is_up=is_up,
+                bytes_sent=interface_io.bytes_sent if interface_io else 0,
+                bytes_recv=interface_io.bytes_recv if interface_io else 0,
+                packets_sent=interface_io.packets_sent if interface_io else 0,
+                packets_recv=interface_io.packets_recv if interface_io else 0
+            )
+            interfaces.append(interface_info)
+
+        return interfaces
+
+    def _get_docker_info(self) -> DockerInfo:
+        """获取Docker信息"""
+        if not self.docker_client:
+            return DockerInfo(
+                version="",
+                api_version="",
+                containers_total=0,
+                containers_running=0,
+                containers_stopped=0,
+                containers_paused=0,
+                images_total=0,
+                images_size=0,
+                volumes_total=0,
+                networks_total=0,
+                is_docker_available=False,
+                docker_root_dir=""
+            )
+
+        try:
+            # 获取Docker版本信息
+            version_info = self.docker_client.version()
+
+            # 获取容器信息
+            containers = self.docker_client.containers.list(all=True)
+            containers_running = len([c for c in containers if c.status == 'running'])
+            containers_stopped = len([c for c in containers if c.status == 'exited' or c.status == 'stopped'])
+            containers_paused = len([c for c in containers if c.status == 'paused'])
+
+            # 获取镜像信息
+            images = self.docker_client.images.list()
+            images_size = sum(img.attrs['Size'] for img in images)
+
+            # 获取卷信息
+            volumes = self.docker_client.volumes.list()
+
+            # 获取网络信息
+            networks = self.docker_client.networks.list()
+
+            # 获取Docker根目录（需要info接口）
+            info = self.docker_client.info()
+            docker_root_dir = info.get('DockerRootDir', '')
+
+            return DockerInfo(
+                version=version_info.get('Version', ''),
+                api_version=version_info.get('ApiVersion', ''),
+                containers_total=len(containers),
+                containers_running=containers_running,
+                containers_stopped=containers_stopped,
+                containers_paused=containers_paused,
+                images_total=len(images),
+                images_size=images_size,
+                volumes_total=len(volumes),
+                networks_total=len(networks),
+                is_docker_available=True,
+                docker_root_dir=docker_root_dir
+            )
+        except Exception as e:
+            logger.error(f"获取Docker信息失败: {e}")
+            return DockerInfo(
+                version="",
+                api_version="",
+                containers_total=0,
+                containers_running=0,
+                containers_stopped=0,
+                containers_paused=0,
+                images_total=0,
+                images_size=0,
+                volumes_total=0,
+                networks_total=0,
+                is_docker_available=False,
+                docker_root_dir=""
+            )
+
+    def _get_top_processes(self, limit: int = 10) -> List[ProcessInfo]:
+        """获取消耗资源最多的进程"""
+        processes = []
+
+        # 获取所有进程信息
+        for proc in psutil.process_iter(['pid', 'name', 'status', 'cpu_percent',
+                                         'memory_percent', 'memory_info', 'create_time',
+                                         'cmdline']):
+            try:
+                process_info = proc.info
+
+                # 获取内存使用信息
+                memory_info = process_info.get('memory_info', None)
+
+                process = ProcessInfo(
+                    pid=process_info['pid'],
+                    name=process_info['name'],
+                    status=process_info['status'],
+                    cpu_percent=process_info.get('cpu_percent', 0),
+                    memory_percent=process_info.get('memory_percent', 0),
+                    memory_rss=memory_info.rss if memory_info else 0,
+                    memory_vms=memory_info.vms if memory_info else 0,
+                    create_time=process_info['create_time'],
+                    cmdline=process_info.get('cmdline', [])
+                )
+                processes.append(process)
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+
+        # 按CPU使用率排序
+        processes.sort(key=lambda x: x.cpu_percent, reverse=True)
+
+        # 限制返回数量
+        return processes[:limit]
 
 class ConfigManager:
     """配置管理器"""
@@ -65,7 +513,9 @@ class ConfigManager:
                 'docker_bin': 'docker',
                 'docker_socket': 'unix:///var/run/docker.sock',
                 'max_upload_size': 100 * 1024 * 1024,  # 100MB
-                'database_file': './docker_manager.db'
+                'database_file': './docker_manager.db',
+                'static_dir': './static',  # 静态文件目录
+                'static_index_file': 'index.html'  # 默认索引文件
             }
 
             # 更新配置
@@ -622,16 +1072,124 @@ class ServiceManager:
         except Exception as e:
             logger.error(f"重启服务失败: {e}")
 
+class StaticFileServer:
+    """静态文件服务器"""
+
+    def __init__(self, config: Dict):
+        self.config = config
+        self.static_dir = Path(config.get('static_dir', './static'))
+        self.index_file = config.get('static_index_file', 'index.html')
+
+        # 创建静态文件目录
+        self.static_dir.mkdir(parents=True, exist_ok=True)
+
+        logger.info(f"静态文件目录: {self.static_dir}")
+
+    def serve_static_file(self, path: str):
+        """提供静态文件服务"""
+        # 如果路径为空或者是根路径，返回index.html
+        if not path or path == '/':
+            path = self.index_file
+
+        # 移除开头的斜杠
+        if path.startswith('/'):
+            path = path[1:]
+
+        # 构建完整的文件路径
+        file_path = self.static_dir / path
+
+        # 检查文件是否存在
+        if file_path.exists() and file_path.is_file():
+            # 获取MIME类型
+            mime_type, _ = mimetypes.guess_type(str(file_path))
+            if not mime_type:
+                mime_type = 'application/octet-stream'
+
+            # 检查是否是HTML文件
+            if mime_type.startswith('text/html'):
+                return send_file(str(file_path), mimetype=mime_type)
+            else:
+                return send_file(str(file_path), mimetype=mime_type)
+
+        # 如果文件不存在，检查是否是目录，如果是目录则返回目录下的index.html
+        elif file_path.exists() and file_path.is_dir():
+            index_path = file_path / self.index_file
+            if index_path.exists():
+                return send_file(str(index_path), mimetype='text/html')
+
+        # 如果既不是文件也不是目录，或者没有index.html，检查是否是API请求的重定向
+        # 对于单页应用，将所有未找到的路径重定向到index.html
+        index_file = self.static_dir / self.index_file
+        if index_file.exists():
+            # 记录404请求
+            logger.debug(f"静态文件未找到: {path}, 重定向到index.html")
+            return send_file(str(index_file), mimetype='text/html')
+
+        # 如果连index.html都没有，返回404
+        return jsonify({'error': '文件未找到'}), 404
+
+    def get_static_file_info(self, path: str = None) -> Dict:
+        """获取静态文件信息"""
+        if path:
+            file_path = self.static_dir / path
+            if file_path.exists():
+                return {
+                    'exists': True,
+                    'path': str(file_path),
+                    'is_file': file_path.is_file(),
+                    'is_dir': file_path.is_dir(),
+                    'size': file_path.stat().st_size if file_path.is_file() else 0,
+                    'modified': datetime.fromtimestamp(file_path.stat().st_mtime).isoformat()
+                }
+            else:
+                return {'exists': False, 'path': str(file_path)}
+        else:
+            # 获取目录信息
+            files = []
+            total_size = 0
+
+            for item in self.static_dir.rglob('*'):
+                if item.is_file():
+                    files.append({
+                        'name': item.name,
+                        'path': str(item.relative_to(self.static_dir)),
+                        'size': item.stat().st_size,
+                        'modified': datetime.fromtimestamp(item.stat().st_mtime).isoformat(),
+                        'type': 'file'
+                    })
+                    total_size += item.stat().st_size
+                elif item.is_dir():
+                    files.append({
+                        'name': item.name,
+                        'path': str(item.relative_to(self.static_dir)),
+                        'size': 0,
+                        'modified': datetime.fromtimestamp(item.stat().st_mtime).isoformat(),
+                        'type': 'directory'
+                    })
+
+            return {
+                'static_dir': str(self.static_dir),
+                'total_files': len([f for f in files if f['type'] == 'file']),
+                'total_dirs': len([f for f in files if f['type'] == 'directory']),
+                'total_size': total_size,
+                'files': files
+            }
+
 class WebServer:
     """WEB服务器"""
 
     def __init__(self, config_file: str):
         self.config = ConfigManager.load_config(config_file)
         self.service_manager = ServiceManager(self.config)
+        self.system_info_collector = SystemInfoCollector(docker_client)
+        self.static_file_server = StaticFileServer(self.config)
 
         # 设置Flask配置
         app.config['MAX_CONTENT_LENGTH'] = self.config['max_upload_size']
         app.config['SECRET_KEY'] = os.urandom(24)
+
+        # 设置静态文件缓存
+        app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 3600  # 1小时缓存
 
     def authenticate(self, request):
         """认证检查"""
@@ -652,7 +1210,570 @@ class WebServer:
             debug=False
         )
 
-# API路由
+# ===================== 静态文件服务路由 =====================
+
+@app.route('/', defaults={'path': ''}, methods=['GET'])
+@app.route('/<path:path>', methods=['GET'])
+def serve_static_files(path):
+    """提供静态文件服务（处理所有非API的GET请求）"""
+    # 检查是否是API请求
+    if path.startswith('api/'):
+        # 如果是API请求但未找到对应路由，返回404
+        return jsonify({'error': 'API端点未找到'}), 404
+
+    # 检查是否是API前缀的请求
+    if request.path.startswith('/api/'):
+        # 如果是API请求但未找到对应路由，返回404
+        return jsonify({'error': 'API端点未找到'}), 404
+
+    # 提供静态文件
+    return static_file_server.serve_static_file(path)
+
+@app.route('/api/static/info', methods=['GET'])
+def get_static_file_info():
+    """获取静态文件信息"""
+    if not authenticate_request():
+        return jsonify({'error': '认证失败'}), 401
+
+    try:
+        path = request.args.get('path')
+        info = static_file_server.get_static_file_info(path)
+
+        return jsonify(info)
+    except Exception as e:
+        logger.error(f"获取静态文件信息失败: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/static/upload', methods=['POST'])
+def upload_static_file():
+    """上传静态文件"""
+    if not authenticate_request():
+        return jsonify({'error': '认证失败'}), 401
+
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': '未找到文件'}), 400
+
+        file = request.files['file']
+        path = request.form.get('path', '')
+
+        if not file.filename:
+            return jsonify({'error': '文件名不能为空'}), 400
+
+        # 构建目标路径
+        if path:
+            target_dir = static_file_server.static_dir / path
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target_path = target_dir / file.filename
+        else:
+            target_path = static_file_server.static_dir / file.filename
+
+        # 保存文件
+        file.save(str(target_path))
+
+        logger.info(f"静态文件上传成功: {target_path}")
+
+        return jsonify({
+            'message': '文件上传成功',
+            'path': str(target_path.relative_to(static_file_server.static_dir)),
+            'size': target_path.stat().st_size
+        })
+    except Exception as e:
+        logger.error(f"上传静态文件失败: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/static/delete', methods=['DELETE'])
+def delete_static_file():
+    """删除静态文件"""
+    if not authenticate_request():
+        return jsonify({'error': '认证失败'}), 401
+
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': '请求体必须为JSON'}), 400
+
+        path = data.get('path')
+        if not path:
+            return jsonify({'error': '文件路径不能为空'}), 400
+
+        # 构建完整路径
+        file_path = static_file_server.static_dir / path
+
+        # 检查文件是否存在
+        if not file_path.exists():
+            return jsonify({'error': '文件不存在'}), 404
+
+        # 检查是否是静态文件目录内的文件
+        try:
+            file_path.relative_to(static_file_server.static_dir)
+        except ValueError:
+            return jsonify({'error': '不允许删除静态文件目录外的文件'}), 400
+
+        # 如果是目录，递归删除
+        if file_path.is_dir():
+            shutil.rmtree(file_path)
+            action = '目录删除成功'
+        else:
+            file_path.unlink()
+            action = '文件删除成功'
+
+        logger.info(f"静态文件删除成功: {file_path}")
+
+        return jsonify({
+            'message': action,
+            'path': path
+        })
+    except Exception as e:
+        logger.error(f"删除静态文件失败: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# ===================== 鉴权API =====================
+
+@app.route('/api/auth/validate', methods=['POST'])
+def validate_token():
+    """验证Token有效性"""
+    try:
+        # 从请求中获取Token
+        auth_token = None
+
+        # 尝试从请求头获取
+        auth_token = request.headers.get('X-Auth-Token')
+
+        # 如果请求头中没有，尝试从JSON body获取
+        if not auth_token and request.is_json:
+            data = request.get_json()
+            auth_token = data.get('token')
+
+        # 如果还是没有，尝试从表单数据获取
+        if not auth_token:
+            auth_token = request.form.get('token')
+
+        # 获取客户端信息
+        client_ip = request.remote_addr
+        user_agent = request.headers.get('User-Agent', 'Unknown')
+        request_method = request.method
+        request_path = request.path
+
+        # 获取配置中的Token
+        config_token = config.get('token', 'default_token_change_me')
+
+        # 验证Token
+        token_match = False
+        authenticated = False
+        message = ""
+
+        if auth_token:
+            token_match = (auth_token == config_token)
+            if token_match:
+                authenticated = True
+                message = "Token验证成功"
+                logger.info(f"Token验证成功 - 客户端IP: {client_ip}")
+            else:
+                authenticated = False
+                message = "Token验证失败: Token不匹配"
+                logger.warning(f"Token验证失败 - 客户端IP: {client_ip}, 提供的Token: {auth_token[:10]}...")
+        else:
+            authenticated = False
+            message = "Token验证失败: 未提供Token"
+            logger.warning(f"Token验证失败 - 客户端IP: {client_ip}, 原因: 未提供Token")
+
+        # 创建鉴权结果
+        auth_result = AuthResult(
+            authenticated=authenticated,
+            message=message,
+            timestamp=datetime.now().isoformat(),
+            token_provided=auth_token or "",
+            token_length=len(auth_token) if auth_token else 0,
+            token_match=token_match,
+            client_ip=client_ip,
+            user_agent=user_agent,
+            request_method=request_method,
+            request_path=request_path
+        )
+
+        # 转换为字典返回
+        result_dict = asdict(auth_result)
+
+        # 根据鉴权结果设置HTTP状态码
+        status_code = 200 if authenticated else 401
+
+        return jsonify(result_dict), status_code
+
+    except Exception as e:
+        logger.error(f"Token验证过程中发生错误: {e}")
+        return jsonify({
+            'error': '内部服务器错误',
+            'details': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+@app.route('/api/auth/info', methods=['GET'])
+def get_auth_info():
+    """获取认证信息（无需认证）"""
+    try:
+        # 获取客户端信息
+        client_ip = request.remote_addr
+        user_agent = request.headers.get('User-Agent', 'Unknown')
+        request_method = request.method
+        request_path = request.path
+
+        # 检查是否有Token提供
+        auth_token = request.headers.get('X-Auth-Token')
+        has_token = bool(auth_token)
+
+        # 获取配置中的Token信息（不显示完整Token）
+        config_token = config.get('token', 'default_token_change_me')
+        token_length = len(config_token)
+        token_prefix = config_token[:3] + "..." if len(config_token) > 3 else "***"
+
+        return jsonify({
+            'timestamp': datetime.now().isoformat(),
+            'client_ip': client_ip,
+            'user_agent': user_agent,
+            'request_method': request_method,
+            'request_path': request_path,
+            'has_token_provided': has_token,
+            'token_provided_length': len(auth_token) if auth_token else 0,
+            'config_token_length': token_length,
+            'config_token_prefix': token_prefix,
+            'auth_required': True,
+            'auth_method': 'X-Auth-Token header or token parameter',
+            'message': '此API不需要认证，仅用于获取认证信息'
+        })
+
+    except Exception as e:
+        logger.error(f"获取认证信息失败: {e}")
+        return jsonify({
+            'error': '获取认证信息失败',
+            'details': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+# ===================== 系统信息API =====================
+
+@app.route('/api/system/info', methods=['GET'])
+def get_system_info():
+    """获取系统基本信息"""
+    if not authenticate_request():
+        return jsonify({'error': '认证失败'}), 401
+
+    try:
+        # 获取系统信息
+        system_info = system_info_collector.get_system_info()
+
+        # 将dataclass转换为字典
+        def dataclass_to_dict(obj):
+            if hasattr(obj, '__dataclass_fields__'):
+                return {k: dataclass_to_dict(v) for k, v in asdict(obj).items()}
+            elif isinstance(obj, list):
+                return [dataclass_to_dict(item) for item in obj]
+            else:
+                return obj
+
+        result = dataclass_to_dict(system_info)
+
+        # 添加格式化信息（便于阅读）
+        result['formatted'] = {
+            'uptime': format_uptime(result['uptime']),
+            'memory': {
+                'total': format_bytes(result['memory']['total']),
+                'available': format_bytes(result['memory']['available']),
+                'used': format_bytes(result['memory']['used']),
+                'free': format_bytes(result['memory']['free'])
+            },
+            'disks': [
+                {
+                    'device': disk['device'],
+                    'mountpoint': disk['mountpoint'],
+                    'total': format_bytes(disk['total']),
+                    'used': format_bytes(disk['used']),
+                    'free': format_bytes(disk['free']),
+                    'usage_percent': f"{disk['usage_percent']:.1f}%"
+                }
+                for disk in result['disks']
+            ],
+            'docker': {
+                'images_size': format_bytes(result['docker']['images_size']),
+                'containers': f"{result['docker']['containers_running']}/{result['docker']['containers_total']} 运行中"
+            }
+        }
+
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"获取系统信息失败: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/system/metrics', methods=['GET'])
+def get_system_metrics():
+    """获取系统性能指标（轻量版）"""
+    if not authenticate_request():
+        return jsonify({'error': '认证失败'}), 401
+
+    try:
+        # 使用缓存或快速获取基本信息
+        cpu_percent = psutil.cpu_percent(interval=0.1)
+        memory = psutil.virtual_memory()
+        swap = psutil.swap_memory()
+
+        # 获取Docker容器状态
+        docker_containers = []
+        if docker_client:
+            try:
+                containers = docker_client.containers.list(all=True)
+                for container in containers[:10]:  # 限制返回数量
+                    docker_containers.append({
+                        'id': container.short_id,
+                        'name': container.name,
+                        'status': container.status,
+                        'image': container.attrs['Config']['Image'],
+                        'created': container.attrs['Created']
+                    })
+            except Exception as e:
+                logger.warning(f"获取Docker容器信息失败: {e}")
+
+        # 获取磁盘使用情况
+        disk_usage = []
+        partitions = psutil.disk_partitions(all=False)
+        for partition in partitions[:5]:  # 限制返回数量
+            try:
+                usage = psutil.disk_usage(partition.mountpoint)
+                disk_usage.append({
+                    'mountpoint': partition.mountpoint,
+                    'total': usage.total,
+                    'used': usage.used,
+                    'free': usage.free,
+                    'percent': usage.percent
+                })
+            except:
+                continue
+
+        # 获取网络IO
+        net_io = psutil.net_io_counters()
+
+        metrics = {
+            'timestamp': datetime.now().isoformat(),
+            'cpu': {
+                'percent': cpu_percent,
+                'cores': psutil.cpu_count(logical=True),
+                'load_average': psutil.getloadavg() if hasattr(psutil, 'getloadavg') else []
+            },
+            'memory': {
+                'total': memory.total,
+                'available': memory.available,
+                'used': memory.used,
+                'percent': memory.percent,
+                'swap_total': swap.total,
+                'swap_used': swap.used,
+                'swap_percent': swap.percent
+            },
+            'disk': disk_usage,
+            'network': {
+                'bytes_sent': net_io.bytes_sent,
+                'bytes_recv': net_io.bytes_recv,
+                'packets_sent': net_io.packets_sent,
+                'packets_recv': net_io.packets_recv
+            },
+            'docker': {
+                'containers_total': len(docker_containers) if docker_client else 0,
+                'containers': docker_containers
+            }
+        }
+
+        # 添加格式化信息
+        metrics['formatted'] = {
+            'cpu_percent': f"{cpu_percent:.1f}%",
+            'memory_percent': f"{memory.percent:.1f}%",
+            'memory_used': format_bytes(memory.used),
+            'memory_total': format_bytes(memory.total),
+            'network_sent': format_bytes(net_io.bytes_sent),
+            'network_recv': format_bytes(net_io.bytes_recv)
+        }
+
+        return jsonify(metrics)
+    except Exception as e:
+        logger.error(f"获取系统指标失败: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/system/processes', methods=['GET'])
+def get_system_processes():
+    """获取系统进程信息"""
+    if not authenticate_request():
+        return jsonify({'error': '认证失败'}), 401
+
+    try:
+        processes = []
+
+        # 获取所有进程
+        for proc in psutil.process_iter(['pid', 'name', 'username', 'status',
+                                         'cpu_percent', 'memory_percent',
+                                         'memory_info', 'create_time', 'cmdline']):
+            try:
+                pinfo = proc.info
+
+                processes.append({
+                    'pid': pinfo['pid'],
+                    'name': pinfo['name'],
+                    'username': pinfo.get('username', ''),
+                    'status': pinfo['status'],
+                    'cpu_percent': pinfo.get('cpu_percent', 0),
+                    'memory_percent': pinfo.get('memory_percent', 0),
+                    'memory_rss': pinfo['memory_info'].rss if pinfo.get('memory_info') else 0,
+                    'create_time': pinfo['create_time'],
+                    'cmdline': ' '.join(pinfo['cmdline']) if pinfo.get('cmdline') else ''
+                })
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+
+        # 排序和分页
+        sort_by = request.args.get('sort', 'cpu_percent')
+        order = request.args.get('order', 'desc')
+        limit = int(request.args.get('limit', 50))
+
+        reverse = (order == 'desc')
+
+        if sort_by in ['cpu_percent', 'memory_percent', 'memory_rss']:
+            processes.sort(key=lambda x: x[sort_by], reverse=reverse)
+
+        # 分页
+        page = int(request.args.get('page', 1))
+        per_page = min(limit, 100)  # 限制每页最大100条
+
+        start_idx = (page - 1) * per_page
+        end_idx = start_idx + per_page
+
+        paginated_processes = processes[start_idx:end_idx]
+
+        return jsonify({
+            'total': len(processes),
+            'page': page,
+            'per_page': per_page,
+            'processes': paginated_processes
+        })
+    except Exception as e:
+        logger.error(f"获取进程信息失败: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/system/docker/stats', methods=['GET'])
+def get_docker_stats():
+    """获取Docker容器统计信息"""
+    if not authenticate_request():
+        return jsonify({'error': '认证失败'}), 401
+
+    try:
+        if not docker_client:
+            return jsonify({'error': 'Docker客户端不可用'}), 503
+
+        containers = docker_client.containers.list(all=True)
+        container_stats = []
+
+        for container in containers:
+            try:
+                # 获取容器统计信息
+                stats = container.stats(stream=False)
+
+                # 计算CPU使用率
+                cpu_stats = stats.get('cpu_stats', {})
+                precpu_stats = stats.get('precpu_stats', {})
+
+                cpu_delta = cpu_stats.get('cpu_usage', {}).get('total_usage', 0) - \
+                            precpu_stats.get('cpu_usage', {}).get('total_usage', 0)
+                system_delta = cpu_stats.get('system_cpu_usage', 0) - \
+                               precpu_stats.get('system_cpu_usage', 0)
+
+                cpu_percent = 0.0
+                if system_delta > 0 and cpu_delta > 0:
+                    cpu_percent = (cpu_delta / system_delta) * cpu_stats.get('online_cpus', 1) * 100
+
+                # 获取内存使用
+                memory_stats = stats.get('memory_stats', {})
+                memory_usage = memory_stats.get('usage', 0)
+                memory_limit = memory_stats.get('limit', 0)
+
+                # 获取网络统计
+                networks = stats.get('networks', {})
+                network_rx = sum(net.get('rx_bytes', 0) for net in networks.values())
+                network_tx = sum(net.get('tx_bytes', 0) for net in networks.values())
+
+                container_stats.append({
+                    'id': container.short_id,
+                    'name': container.name,
+                    'status': container.status,
+                    'image': container.attrs['Config']['Image'],
+                    'cpu_percent': round(cpu_percent, 2),
+                    'memory_usage': memory_usage,
+                    'memory_limit': memory_limit,
+                    'memory_percent': round((memory_usage / memory_limit * 100) if memory_limit > 0 else 0, 2),
+                    'network_rx': network_rx,
+                    'network_tx': network_tx,
+                    'pids': stats.get('pids_stats', {}).get('current', 0)
+                })
+            except Exception as e:
+                logger.warning(f"获取容器 {container.name} 统计信息失败: {e}")
+                continue
+
+        # 按CPU使用率排序
+        container_stats.sort(key=lambda x: x['cpu_percent'], reverse=True)
+
+        # 添加格式化信息
+        for stat in container_stats:
+            stat['formatted'] = {
+                'memory_usage': format_bytes(stat['memory_usage']),
+                'memory_limit': format_bytes(stat['memory_limit']),
+                'network_rx': format_bytes(stat['network_rx']),
+                'network_tx': format_bytes(stat['network_tx'])
+            }
+
+        return jsonify(container_stats)
+    except Exception as e:
+        logger.error(f"获取Docker统计信息失败: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/system/docker/images', methods=['GET'])
+def get_docker_images():
+    """获取Docker镜像信息"""
+    if not authenticate_request():
+        return jsonify({'error': '认证失败'}), 401
+
+    try:
+        if not docker_client:
+            return jsonify({'error': 'Docker客户端不可用'}), 503
+
+        images = docker_client.images.list()
+        image_list = []
+
+        for image in images:
+            tags = image.tags
+            if not tags:
+                continue
+
+            image_list.append({
+                'id': image.short_id,
+                'tags': tags,
+                'created': image.attrs['Created'],
+                'size': image.attrs['Size'],
+                'virtual_size': image.attrs.get('VirtualSize', 0),
+                'labels': image.attrs.get('Labels', {})
+            })
+
+        # 按大小排序
+        image_list.sort(key=lambda x: x['size'], reverse=True)
+
+        # 添加格式化信息
+        for img in image_list:
+            img['formatted'] = {
+                'size': format_bytes(img['size']),
+                'virtual_size': format_bytes(img['virtual_size'])
+            }
+
+        return jsonify(image_list)
+    except Exception as e:
+        logger.error(f"获取Docker镜像信息失败: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# ===================== 原有的API路由 =====================
+
+# 健康检查
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """健康检查"""
@@ -1457,22 +2578,58 @@ def upgrade_server():
         logger.error(f"升级服务器失败: {e}")
         return jsonify({'error': str(e)}), 500
 
+# ===================== 辅助函数 =====================
+
 def authenticate_request():
     """认证请求"""
     token = request.headers.get('X-Auth-Token')
     return token == config.get('token')
+
+def format_bytes(bytes_value: int) -> str:
+    """格式化字节数为人类可读格式"""
+    if bytes_value == 0:
+        return "0 B"
+
+    units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+    unit_index = 0
+
+    while bytes_value >= 1024 and unit_index < len(units) - 1:
+        bytes_value /= 1024
+        unit_index += 1
+
+    return f"{bytes_value:.2f} {units[unit_index]}"
+
+def format_uptime(seconds: int) -> str:
+    """格式化运行时间"""
+    days, remainder = divmod(seconds, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, seconds = divmod(remainder, 60)
+
+    parts = []
+    if days > 0:
+        parts.append(f"{days}天")
+    if hours > 0:
+        parts.append(f"{hours}小时")
+    if minutes > 0:
+        parts.append(f"{minutes}分钟")
+    if seconds > 0 or not parts:
+        parts.append(f"{seconds}秒")
+
+    return ' '.join(parts)
 
 def restart_server():
     """重启服务器"""
     logger.info("重启服务器...")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
-# 全局实例
+# ===================== 全局实例 =====================
 service_manager = None
+system_info_collector = None
+static_file_server = None
 
 def main():
     """主函数"""
-    global logger
+    global logger, config, service_manager, system_info_collector, docker_client, static_file_server
 
     setup_grace_exit(graceful_exit)
     parser = argparse.ArgumentParser(description='Docker Compose服务管理WEB服务器')
@@ -1481,11 +2638,27 @@ def main():
     args = parser.parse_args()
     config = ConfigManager.load_config(args.config)
     logger = setup_logger(os.path.join(config['root_dir'],"var/log/nacos_client.log"))
-    get_sothoth_ip_address()
+
+    # 初始化Docker客户端
+    try:
+        docker_client = docker.DockerClient(base_url=config['docker_socket'])
+        docker_client.ping()
+        logger.info("Docker客户端初始化成功")
+    except Exception as e:
+        logger.error(f"Docker客户端初始化失败: {e}")
+        docker_client = None
+
     # 启动服务器
     server = WebServer(args.config)
-    global service_manager
     service_manager = server.service_manager
+    system_info_collector = SystemInfoCollector(docker_client)
+    static_file_server = server.static_file_server
+
+    # 创建示例静态文件（如果目录为空）
+    static_dir = Path(config.get('static_dir', './static'))
+    index_file = static_dir / config.get('static_index_file', 'index.html')
+    # 启动服务器
+    get_sothoth_ip_address()
     nacos_thread = threading.Thread(target=start_nacos,args=[config['nacos_server_url']])
     nacos_thread.start()
     server.run()

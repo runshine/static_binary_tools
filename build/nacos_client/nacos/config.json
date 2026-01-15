@@ -12,6 +12,6 @@
   "docker_socket": "unix:///var/run/docker.sock",
   "max_upload_size": 104857600,
   "database_file": "./docker_manager.db",
-  "nacos_server_url": "http://192.168.12.190",
+  "nacos_server_url": "http://192.168.12.90:8848",
   "root_dir": "/tmp/"
 }
