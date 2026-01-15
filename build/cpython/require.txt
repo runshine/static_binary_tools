@@ -4,3 +4,4 @@ flask
 flask-cors
 pyyaml
 docker
+psutil
