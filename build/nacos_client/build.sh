@@ -4,7 +4,7 @@ source "$(cd `dirname $0`;pwd)/../common/prepare_dir.sh"
 source "$(cd `dirname $0`;pwd)/../common/utils_func.sh"
 source "$(cd `dirname $0`;pwd)/../common/arch_detect.sh"
 
-apt update && apt-get -y install curl wget unzip nodejs npmnodejs npm
+apt update && apt-get -y install curl wget unzip nodejs npm
 
 VERSION="latest"
 
