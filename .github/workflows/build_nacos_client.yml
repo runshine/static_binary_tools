@@ -27,7 +27,7 @@ jobs:
       - name: clean to default
         run: sed -i 's/https:\/\/develop-agent.819819.xyz//g'   ./build/nacos_client/frontend/api.ts
 
-      - name: cat api.ts
+      - name: cat api.ts for check
         run: cat ./build/nacos_client/frontend/api.ts
 
       - name: Set up QEMU
