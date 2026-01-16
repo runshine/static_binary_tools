@@ -1091,7 +1091,7 @@ class StaticFileServer:
         if not path or path == '/':
             path = self.index_file
 
-        # 移除开头的斜杠
+        # 移除开头的斜杠（如果有）
         if path.startswith('/'):
             path = path[1:]
 
@@ -1100,6 +1100,13 @@ class StaticFileServer:
 
         # 检查文件是否存在
         if file_path.exists() and file_path.is_file():
+            # 安全检查：确保文件在静态目录内
+            try:
+                file_path.relative_to(self.static_dir)
+            except ValueError:
+                # 试图访问静态目录外的文件
+                return jsonify({'error': '禁止访问'}), 403
+
             # 获取MIME类型
             mime_type, _ = mimetypes.guess_type(str(file_path))
             if not mime_type:
@@ -1117,7 +1124,6 @@ class StaticFileServer:
             if index_path.exists():
                 return send_file(str(index_path), mimetype='text/html')
 
-        # 如果既不是文件也不是目录，或者没有index.html，检查是否是API请求的重定向
         # 对于单页应用，将所有未找到的路径重定向到index.html
         index_file = self.static_dir / self.index_file
         if index_file.exists():
@@ -1177,7 +1183,6 @@ class StaticFileServer:
 
 class WebServer:
     """WEB服务器"""
-
     def __init__(self, config_file: str):
         self.config = ConfigManager.load_config(config_file)
         self.service_manager = ServiceManager(self.config)
@@ -1188,8 +1193,20 @@ class WebServer:
         app.config['MAX_CONTENT_LENGTH'] = self.config['max_upload_size']
         app.config['SECRET_KEY'] = os.urandom(24)
 
+        # 移除默认的/static前缀，设置静态文件从根目录提供
+        app.config['APPLICATION_ROOT'] = '/'
+
         # 设置静态文件缓存
         app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 3600  # 1小时缓存
+
+        # 配置静态文件从根目录访问
+        self._setup_static_routes()
+
+    def _setup_static_routes(self):
+        """设置静态文件路由"""
+        # 移除Flask默认的/static前缀
+        # 我们将通过自定义路由处理所有静态文件请求
+        pass
 
     def authenticate(self, request):
         """认证检查"""
@@ -1212,18 +1229,20 @@ class WebServer:
 
 # ===================== 静态文件服务路由 =====================
 
+# ===================== 静态文件服务路由 =====================
+
 @app.route('/', defaults={'path': ''}, methods=['GET'])
 @app.route('/<path:path>', methods=['GET'])
 def serve_static_files(path):
     """提供静态文件服务（处理所有非API的GET请求）"""
     # 检查是否是API请求
-    if path.startswith('api/'):
+    if request.path.startswith('/api/'):
         # 如果是API请求但未找到对应路由，返回404
         return jsonify({'error': 'API端点未找到'}), 404
 
-    # 检查是否是API前缀的请求
-    if request.path.startswith('/api/'):
-        # 如果是API请求但未找到对应路由，返回404
+    # 检查是否是静态文件管理API
+    if request.path.startswith('/api/static/'):
+        # 如果是静态文件管理API，返回404（由对应的API路由处理）
         return jsonify({'error': 'API端点未找到'}), 404
 
     # 提供静态文件
