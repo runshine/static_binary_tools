@@ -2650,6 +2650,8 @@ def main():
     """主函数"""
     global logger, config, service_manager, system_info_collector, docker_client, static_file_server
 
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    os.chdir(script_dir)
     setup_grace_exit(graceful_exit)
     parser = argparse.ArgumentParser(description='Docker Compose服务管理WEB服务器')
     parser.add_argument('-c', '--config', required=True, help='配置文件路径')
