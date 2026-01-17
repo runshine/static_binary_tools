@@ -1494,6 +1494,7 @@ def get_system_info():
 
         # 添加格式化信息（便于阅读）
         result['formatted'] = {
+            'nacos_agent_version': '20260101.0101',
             'uptime': format_uptime(result['uptime']),
             'memory': {
                 'total': format_bytes(result['memory']['total']),
