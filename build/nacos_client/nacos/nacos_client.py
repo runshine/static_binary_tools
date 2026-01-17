@@ -28,6 +28,7 @@ import psutil
 import platform
 import socket
 import mimetypes
+import re
 
 from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
@@ -776,8 +777,8 @@ class ServiceManager:
         """从YAML创建服务"""
         try:
             # 验证服务名称
-            if not service_name or not service_name.isalnum():
-                return False, "服务名称只能包含字母和数字"
+            if not service_name or not re.match(r'^[a-zA-Z0-9_-]+$', service_name):
+                return False, "服务名称只能包含字母、数字、下划线和连字符"
 
             # 检查服务是否已存在
             existing = self.db.fetch_one("SELECT id FROM services WHERE name = ?", (service_name,))
@@ -825,8 +826,8 @@ class ServiceManager:
         temp_dir = None
         try:
             # 验证服务名称
-            if not service_name or not service_name.isalnum():
-                return False, "服务名称只能包含字母和数字"
+            if not service_name or not re.match(r'^[a-zA-Z0-9_-]+$', service_name):
+                return False, "服务名称只能包含字母、数字、下划线和连字符"
 
             # 检查服务是否已存在
             existing = self.db.fetch_one("SELECT id FROM services WHERE name = ?", (service_name,))
