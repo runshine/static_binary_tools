@@ -12,7 +12,7 @@ export TZ="GMT+8"
 ARCHS=("x86_64" "aarch64" "armhf" "armel" "riscv64")
 BUILD_VERSION=$(date +"%Y%m%d.%H%M%S")
 VERSION="${BUILD_VERSION}"
-
+echo "build version: ${VERSION}, current date: $(date)"
 sed -i "s/20060102.150405/${VERSION}/g" main.go
 VERSION="latest"
 

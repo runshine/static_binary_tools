@@ -16,6 +16,7 @@ nvm install 24
 VERSION=$(date +"%Y%m%d.%H%M%S")
 cd /build
 sed -i "s/20260101.0101/${VERSION}/g" nacos/nacos_client.py
+echo "build version: ${VERSION}, current date: $(date)"
 
 VERSION="latest"
 
