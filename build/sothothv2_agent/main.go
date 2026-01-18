@@ -12,7 +12,6 @@ import (
     "os/exec"
     "os/signal"
     "path/filepath"
-    "regexp"
     "sort"
     "strconv"
     "strings"
