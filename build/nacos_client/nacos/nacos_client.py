@@ -597,10 +597,17 @@ class ServiceManager:
         self.config = config
         self.compose_root = Path(config['compose_root'])
         self.docker_compose_bin = config['docker_compose_bin']
+        self.docker_socket = config['docker_socket']  # 保存docker_socket
         self.db = DatabaseManager(config['database_file'])
 
         # 创建服务目录
         self.compose_root.mkdir(parents=True, exist_ok=True)
+
+    def get_env_with_docker_host(self):
+        """获取包含DOCKER_HOST环境变量的环境变量字典"""
+        env = os.environ.copy()
+        env['DOCKER_HOST'] = self.docker_socket
+        return env
 
     def get_service_path(self, service_name: str) -> Path:
         """获取服务路径"""
@@ -642,7 +649,8 @@ class ServiceManager:
                 cmd,
                 capture_output=True,
                 text=True,
-                cwd=self.get_service_path(service_name)
+                cwd=self.get_service_path(service_name),
+                env=self.get_env_with_docker_host()
             )
 
             if result.returncode == 0:
@@ -695,7 +703,8 @@ class ServiceManager:
                 cmd,
                 capture_output=True,
                 text=True,
-                cwd=self.get_service_path(service_name)
+                cwd=self.get_service_path(service_name),
+                env=self.get_env_with_docker_host()
             )
 
             if result.returncode == 0:
@@ -734,7 +743,8 @@ class ServiceManager:
                 cmd,
                 capture_output=True,
                 text=True,
-                cwd=self.get_service_path(service_name)
+                cwd=self.get_service_path(service_name),
+                env=self.get_env_with_docker_host()
             )
 
             if result.returncode == 0:
@@ -966,7 +976,8 @@ class ServiceManager:
                 cmd,
                 capture_output=True,
                 text=True,
-                cwd=self.get_service_path(service_name)
+                cwd=self.get_service_path(service_name),
+                env=self.get_env_with_docker_host()
             )
 
             if result.returncode == 0:
@@ -1005,7 +1016,8 @@ class ServiceManager:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=30,
+                env=self.get_env_with_docker_host()
             )
 
             if result.returncode == 0:
@@ -1213,8 +1225,6 @@ class WebServer:
             port=self.config['port'],
             debug=False
         )
-
-# ===================== 静态文件服务路由 =====================
 
 # ===================== 静态文件服务路由 =====================
 
