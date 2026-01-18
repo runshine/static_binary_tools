@@ -602,20 +602,6 @@ class ServiceManager:
         # 创建服务目录
         self.compose_root.mkdir(parents=True, exist_ok=True)
 
-        # 初始化Docker客户端
-        self.init_docker_client()
-
-    def init_docker_client(self):
-        """初始化Docker客户端"""
-        global docker_client
-        try:
-            docker_client = docker.DockerClient(base_url=self.config['docker_socket'])
-            docker_client.ping()
-            logger.info("Docker客户端初始化成功")
-        except Exception as e:
-            logger.error(f"Docker客户端初始化失败: {e}")
-            docker_client = None
-
     def get_service_path(self, service_name: str) -> Path:
         """获取服务路径"""
         return self.compose_root / service_name
@@ -1184,7 +1170,7 @@ class StaticFileServer:
 
 class WebServer:
     """WEB服务器"""
-    def __init__(self, config_file: str):
+    def __init__(self, config_file: str, docker_client=None):
         self.config = ConfigManager.load_config(config_file)
         self.service_manager = ServiceManager(self.config)
         self.system_info_collector = SystemInfoCollector(docker_client)
@@ -2662,18 +2648,29 @@ def main():
     config = ConfigManager.load_config(args.config)
     logger = setup_logger(os.path.join(config['root_dir'],"var/log/nacos_client.log"))
 
-    # 初始化Docker客户端
-    try:
-        docker_client = docker.DockerClient(base_url=config['docker_socket'])
-        docker_client.ping()
-        logger.info("Docker客户端初始化成功")
-    except Exception as e:
-        logger.error(f"Docker客户端初始化失败: {e}")
-        docker_client = None
-        exit(255)
+    # 初始化Docker客户端，带重试逻辑
+    max_retries = 10
+    retry_interval = 10  # 秒
+
+    for retry_count in range(max_retries):
+        try:
+            logger.info(f"尝试初始化Docker客户端 (第 {retry_count + 1} 次)...")
+            docker_client = docker.DockerClient(base_url=config['docker_socket'])
+            docker_client.ping()
+            logger.info("Docker客户端初始化成功")
+            break
+        except Exception as e:
+            logger.error(f"Docker客户端初始化失败: {e}")
+
+            if retry_count < max_retries - 1:
+                logger.info(f"等待 {retry_interval} 秒后重试...")
+                time.sleep(retry_interval)
+            else:
+                logger.error(f"Docker客户端初始化失败超过 {max_retries} 次，进程退出")
+                sys.exit(255)
 
     # 启动服务器
-    server = WebServer(args.config)
+    server = WebServer(args.config, docker_client)
     service_manager = server.service_manager
     system_info_collector = SystemInfoCollector(docker_client)
     static_file_server = server.static_file_server
