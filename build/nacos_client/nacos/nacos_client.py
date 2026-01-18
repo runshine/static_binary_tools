@@ -609,6 +609,75 @@ class ServiceManager:
         env['DOCKER_HOST'] = self.docker_socket
         return env
 
+    def validate_compose_file(self, compose_file: Path) -> Tuple[bool, str]:
+        """验证docker-compose文件是否有效"""
+        try:
+            # 检查文件是否存在
+            if not compose_file.exists():
+                return False, f"文件不存在: {compose_file}"
+
+            # 读取并解析YAML
+            with open(compose_file, 'r', encoding='utf-8') as f:
+                yaml_content = f.read()
+
+            parsed = yaml.safe_load(yaml_content)
+
+            # 基础校验：必须包含services部分
+            if not parsed:
+                return False, "YAML文件为空"
+
+            # 检查是否是有效的docker-compose文件
+            # 允许顶层的name字段（docker-compose v3.4+支持）
+            if 'services' not in parsed:
+                return False, "YAML文件必须包含'services'部分"
+
+            # 验证services部分
+            services = parsed.get('services', {})
+            if not services:
+                return False, "services部分不能为空"
+
+            # 检查每个服务的基本结构
+            for service_name, service_config in services.items():
+                if not isinstance(service_config, dict):
+                    return False, f"服务 '{service_name}' 配置必须是字典格式"
+
+                # 检查必要字段
+                if 'image' not in service_config and 'build' not in service_config:
+                    return False, f"服务 '{service_name}' 必须包含'image'或'build'字段"
+
+            # 尝试使用docker-compose config验证（可选，更严格）
+            try:
+                cmd = [
+                    self.docker_compose_bin,
+                    '-f', str(compose_file),
+                    'config'
+                ]
+
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    env=self.get_env_with_docker_host(),
+                    timeout=10
+                )
+
+                if result.returncode != 0:
+                    return False, f"docker-compose验证失败: {result.stderr}"
+
+            except subprocess.TimeoutExpired:
+                # 超时不是致命错误，继续
+                logger.warning(f"docker-compose验证超时，跳过")
+            except Exception as e:
+                # 其他错误不是致命错误，继续
+                logger.warning(f"docker-compose验证出错: {e}")
+
+            return True, "验证成功"
+
+        except yaml.YAMLError as e:
+            return False, f"YAML格式错误: {e}"
+        except Exception as e:
+            return False, f"验证失败: {str(e)}"
+
     def get_service_path(self, service_name: str) -> Path:
         """获取服务路径"""
         return self.compose_root / service_name
@@ -654,21 +723,45 @@ class ServiceManager:
             )
 
             if result.returncode == 0:
-                containers = json.loads(result.stdout)
-                running_count = sum(1 for c in containers if c.get('State') == 'running')
-                total_count = len(containers)
+                try:
+                    # 修复：检查输出是否为空
+                    if not result.stdout.strip():
+                        return {
+                            'status': 'stopped',
+                            'containers': [],
+                            'running': 0,
+                            'total': 0
+                        }
 
-                status = 'running' if running_count == total_count > 0 else 'partially_running'
-                if total_count == 0:
-                    status = 'stopped'
+                    containers = json.loads(result.stdout)
+                    if not isinstance(containers, list):
+                        # 如果返回的不是列表，可能是空对象或其他格式
+                        containers = []
 
-                return {
-                    'status': status,
-                    'containers': containers,
-                    'running': running_count,
-                    'total': total_count
-                }
+                    running_count = sum(1 for c in containers if c.get('State') == 'running')
+                    total_count = len(containers)
+
+                    status = 'running' if running_count == total_count > 0 else 'partially_running'
+                    if total_count == 0:
+                        status = 'stopped'
+
+                    return {
+                        'status': status,
+                        'containers': containers,
+                        'running': running_count,
+                        'total': total_count
+                    }
+                except json.JSONDecodeError as e:
+                    logger.error(f"解析docker-compose输出JSON失败: {e}, 输出: {result.stdout[:200]}")
+                    return {
+                        'status': 'unknown',
+                        'containers': [],
+                        'error': f'JSON解析失败: {str(e)}'
+                    }
             else:
+                # 命令执行失败，检查是否是服务未运行
+                if "no such service" in result.stderr.lower() or "no configuration" in result.stderr.lower():
+                    return {'status': 'stopped', 'containers': []}
                 return {'status': 'unknown', 'containers': []}
 
         except Exception as e:
@@ -696,7 +789,8 @@ class ServiceManager:
                 '-f', str(compose_file),
                 '-p', project_name,
                 'up',
-                '-d'
+                '-d',
+                '--remove-orphans'
             ]
 
             result = subprocess.run(
@@ -771,6 +865,7 @@ class ServiceManager:
 
     def create_service_from_yaml(self, service_name: str, yaml_content: str) -> Tuple[bool, str]:
         """从YAML创建服务"""
+        service_path = None
         try:
             # 验证服务名称
             if not service_name or not re.match(r'^[a-zA-Z0-9_-]+$', service_name):
@@ -790,15 +885,11 @@ class ServiceManager:
             with open(compose_file, 'w', encoding='utf-8') as f:
                 f.write(yaml_content)
 
-            # 验证YAML格式
-            try:
-                parsed = yaml.safe_load(yaml_content)
-                if not parsed or 'services' not in parsed:
-                    shutil.rmtree(service_path)
-                    return False, "YAML文件必须包含services部分"
-            except yaml.YAMLError as e:
+            # 验证YAML格式和docker-compose有效性
+            is_valid, error_msg = self.validate_compose_file(compose_file)
+            if not is_valid:
                 shutil.rmtree(service_path)
-                return False, f"YAML格式错误: {e}"
+                return False, f"YAML文件验证失败: {error_msg}"
 
             # 插入数据库记录
             self.db.execute_query(
@@ -809,17 +900,21 @@ class ServiceManager:
             logger.info(f"服务 {service_name} 创建成功")
             return True, "服务创建成功"
 
+        except yaml.YAMLError as e:
+            if service_path and service_path.exists():
+                shutil.rmtree(service_path, ignore_errors=True)
+            return False, f"YAML格式错误: {e}"
         except Exception as e:
             logger.error(f"创建服务失败: {e}")
             # 清理已创建的目录
-            service_path = self.get_service_path(service_name)
-            if service_path.exists():
+            if service_path and service_path.exists():
                 shutil.rmtree(service_path, ignore_errors=True)
             return False, f"创建失败: {str(e)}"
 
     def create_service_from_zip(self, service_name: str, zip_file_path: str) -> Tuple[bool, str]:
         """从ZIP文件创建服务"""
         temp_dir = None
+        service_path = None
         try:
             # 验证服务名称
             if not service_name or not re.match(r'^[a-zA-Z0-9_-]+$', service_name):
@@ -841,22 +936,21 @@ class ServiceManager:
             yaml_files = list(Path(temp_dir).rglob('service.yaml'))
             yaml_files.extend(list(Path(temp_dir).rglob('docker-compose.yaml')))
             yaml_files.extend(list(Path(temp_dir).rglob('docker-compose.yml')))
+            yaml_files.extend(list(Path(temp_dir).rglob('compose.yaml')))
+            yaml_files.extend(list(Path(temp_dir).rglob('compose.yml')))
 
             if not yaml_files:
                 shutil.rmtree(temp_dir, ignore_errors=True)
-                return False, "未找到service.yaml或docker-compose.yaml文件"
+                return False, "未找到service.yaml、docker-compose.yaml、docker-compose.yml、compose.yaml或compose.yml文件"
 
             # 使用第一个找到的YAML文件
             source_yaml = yaml_files[0]
 
-            # 读取并验证YAML
-            with open(source_yaml, 'r', encoding='utf-8') as f:
-                yaml_content = f.read()
-
-            parsed = yaml.safe_load(yaml_content)
-            if not parsed or 'services' not in parsed:
+            # 验证YAML文件
+            is_valid, error_msg = self.validate_compose_file(source_yaml)
+            if not is_valid:
                 shutil.rmtree(temp_dir, ignore_errors=True)
-                return False, "YAML文件必须包含services部分"
+                return False, f"YAML文件验证失败: {error_msg}"
 
             # 创建服务目录
             service_path = self.get_service_path(service_name)
@@ -870,14 +964,25 @@ class ServiceManager:
                 else:
                     shutil.copy2(item, dest)
 
-            # 确保service.yaml文件存在
+            # 确保service.yaml文件存在（如果原文件名不是service.yaml）
             target_yaml = service_path / 'service.yaml'
             if not target_yaml.exists():
-                shutil.copy2(source_yaml, target_yaml)
+                # 如果源文件是docker-compose.yaml/compose.yaml等，重命名为service.yaml
+                if source_yaml.name in ['docker-compose.yaml', 'docker-compose.yml', 'compose.yaml', 'compose.yml']:
+                    shutil.copy2(source_yaml, target_yaml)
+                else:
+                    # 否则保持原文件名
+                    shutil.copy2(source_yaml, target_yaml)
 
             # 清理临时目录
             shutil.rmtree(temp_dir, ignore_errors=True)
             temp_dir = None
+
+            # 再次验证目标文件
+            is_valid, error_msg = self.validate_compose_file(target_yaml)
+            if not is_valid:
+                shutil.rmtree(service_path, ignore_errors=True)
+                return False, f"YAML文件验证失败: {error_msg}"
 
             # 插入数据库记录
             self.db.execute_query(
@@ -889,14 +994,23 @@ class ServiceManager:
             return True, "服务创建成功"
 
         except zipfile.BadZipFile:
+            if temp_dir:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            if service_path and service_path.exists():
+                shutil.rmtree(service_path, ignore_errors=True)
             return False, "无效的ZIP文件"
+        except yaml.YAMLError as e:
+            if temp_dir:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            if service_path and service_path.exists():
+                shutil.rmtree(service_path, ignore_errors=True)
+            return False, f"YAML格式错误: {e}"
         except Exception as e:
             logger.error(f"从ZIP创建服务失败: {e}")
             # 清理
-            if temp_dir and Path(temp_dir).exists():
+            if temp_dir:
                 shutil.rmtree(temp_dir, ignore_errors=True)
-            service_path = self.get_service_path(service_name)
-            if service_path.exists():
+            if service_path and service_path.exists():
                 shutil.rmtree(service_path, ignore_errors=True)
             return False, f"创建失败: {str(e)}"
 
