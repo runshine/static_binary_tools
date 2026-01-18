@@ -1,28 +1,28 @@
 package main
 
 import (
+    "compress/gzip"
+    "encoding/json"
     "flag"
     "fmt"
+    "io"
+    "io/ioutil"
     "log"
     "os"
     "os/exec"
     "os/signal"
     "path/filepath"
-    "sync"
-    "time"
-    "strings"
-    "sort"
-    "encoding/json"
-    "strconv"
-    "io/ioutil"
-    "syscall"
-    "github.com/google/uuid"
-    "gopkg.in/ini.v1"
-    "github.com/robfig/cron/v3"
-    "compress/gzip"
-    "io"
-    "path/filepath"
     "regexp"
+    "sort"
+    "strconv"
+    "strings"
+    "sync"
+    "syscall"
+    "time"
+
+    "github.com/google/uuid"
+    "github.com/robfig/cron/v3"
+    "gopkg.in/ini.v1"
 )
 
 // Monitor配置结构体
@@ -70,6 +70,14 @@ type ServiceStatus struct {
     mutex       sync.RWMutex
 }
 
+// RotateConfig 日志轮转配置
+type RotateConfig struct {
+    MaxSize        int64  // 最大文件大小（字节）
+    MaxBackups     int    // 最大备份文件数量
+    Compress       bool   // 是否压缩旧日志
+    CompressSuffix string // 压缩文件后缀
+}
+
 // 全局变量
 var (
     // 版本号使用日期格式：YYYYMMDD.HHMMSS
@@ -88,6 +96,14 @@ var (
     versionFlag  = flag.Bool("version", false, "显示版本信息")
     enableCgroup = flag.Bool("enable-cgroup", true, "启用cgroup限制")
     cgroupName   = flag.String("cgroup-name", "sothothv2_agent", "cgroup名称")
+
+    // 默认轮转配置
+    DefaultRotateConfig = RotateConfig{
+        MaxSize:        5 * 1024 * 1024, // 5MB
+        MaxBackups:     2,               // 保留2个压缩文件
+        Compress:       true,
+        CompressSuffix: ".gz",
+    }
 
     // 配置和状态
     monitorConfig MonitorConfig
@@ -114,23 +130,102 @@ const (
     ServiceStopTimeout = 10 * time.Second  // 服务停止超时时间
 )
 
-// ==================== 日志轮转 ====================
+func init() {
+    // 初始化日志
+    logger = log.New(os.Stdout, fmt.Sprintf("[SothothV2 %s] ", BuildVersion), log.LstdFlags|log.Lshortfile)
 
-// RotateConfig 日志轮转配置
-type RotateConfig struct {
-    MaxSize        int64  // 最大文件大小（字节）
-    MaxBackups     int    // 最大备份文件数量
-    Compress       bool   // 是否压缩旧日志
-    CompressSuffix string // 压缩文件后缀
+    // 初始化信号通道
+    signalChan = make(chan os.Signal, 1)
 }
 
-// DefaultRotateConfig 默认轮转配置
-var DefaultRotateConfig = RotateConfig{
-    MaxSize:        5 * 1024 * 1024, // 5MB
-    MaxBackups:     2,               // 保留2个压缩文件
-    Compress:       true,
-    CompressSuffix: ".gz",
+func main() {
+    flag.Parse()
+
+    if *versionFlag {
+        fmt.Printf("SothothV2 Monitor Agent Version: %s\n", BuildVersion)
+        fmt.Printf("Build Time: %s\n", time.Now().Format("2006-01-02 15:04:05"))
+        return
+    }
+
+    // 新增：创建并获取进程锁，防止重复拉起
+    if err := acquireProcessLock(); err != nil {
+        logger.Fatalf("Failed to acquire process lock: %v", err)
+    }
+    defer releaseProcessLock()
+
+    // 检查配置文件是否存在
+    if _, err := os.Stat(*configFile); err == nil {
+        loadConfigFromFile(*configFile)
+    } else {
+        loadConfigFromFlags()
+        saveConfigToFile(*configFile)
+    }
+
+    logger.Printf("Starting SothothV2 Agent v%s", BuildVersion)
+
+    // 设置日志级别和路径
+    setupLogger()
+
+    // 检查必要参数
+    if monitorConfig.Workspace == "" || monitorConfig.ProjectID == "" ||
+       monitorConfig.ServerAddr == "" || monitorConfig.ServerPort == "" {
+        logger.Fatal("workspace, project-id, server-addr, server-port are required")
+    }
+
+    // 如果没有UUID，生成一个
+    if monitorConfig.UUID == "" {
+        monitorConfig.UUID = uuid.New().String()
+        saveConfigToFile(*configFile)
+    }
+
+    // 检查并创建cgroup
+    if monitorConfig.EnableCgroup {
+        initCgroup()
+    }
+
+    // 设置信号处理
+    setupSignalHandler()
+
+    // 如果不是前台运行，则作为守护进程运行
+    if !monitorConfig.Foreground && os.Getppid() != 1 {
+        daemonize()
+        return
+    }
+
+    logger.Printf("Agent started. UUID: %s", monitorConfig.UUID)
+    logger.Printf("Workspace: %s", monitorConfig.Workspace)
+    logger.Printf("Project ID: %s", monitorConfig.ProjectID)
+    logger.Printf("Server: %s:%s", monitorConfig.ServerAddr, monitorConfig.ServerPort)
+    logger.Printf("Signal handler installed. Send SIGINT or SIGTERM for graceful shutdown.")
+    logger.Printf("Service stop timeout: %v", ServiceStopTimeout)
+
+    // 初始化服务
+    services = make(map[string]*ServiceStatus)
+    serviceStartOrder = make([]string, 0)
+
+    // 创建service_config目录
+    serviceConfigDir := filepath.Join(monitorConfig.Workspace, "service_config")
+    if err := os.MkdirAll(serviceConfigDir, 0755); err != nil {
+        logger.Printf("Failed to create service config directory: %v", err)
+    }
+
+    // 加载服务配置并输出详细信息
+    loadServiceConfigs(serviceConfigDir)
+
+    // 清理过多的备份文件
+    cleanupExcessiveBackups()
+
+    // 启动cron定时任务
+    startMonitorCron()
+
+    // 启动所有服务
+    startAllServices()
+
+    // 等待关闭信号
+    waitForShutdown()
 }
+
+// ==================== 日志轮转功能 ====================
 
 // RotateLogFile 轮转日志文件
 func RotateLogFile(filename string, config RotateConfig) error {
@@ -299,99 +394,83 @@ func setupLoggerWithRotation() {
     }
 }
 
-func init() {
-    // 初始化日志
-    logger = log.New(os.Stdout, fmt.Sprintf("[SothothV2 %s] ", BuildVersion), log.LstdFlags|log.Lshortfile)
+// rotateAllServiceLogs 轮转所有服务的日志文件
+func rotateAllServiceLogs() {
+    logger.Println("Checking service log files for rotation...")
 
-    // 初始化信号通道
-    signalChan = make(chan os.Signal, 1)
+    serviceMutex.RLock()
+    defer serviceMutex.RUnlock()
+
+    for serviceName, status := range services {
+        status.mutex.RLock()
+
+        // 轮转标准输出日志
+        if status.Service.StdoutLog != "" {
+            if err := RotateLogFile(status.Service.StdoutLog, DefaultRotateConfig); err != nil {
+                logger.Printf("[%s] Failed to rotate stdout log: %v", serviceName, err)
+            }
+        }
+
+        // 轮转标准错误日志
+        if status.Service.StderrLog != "" {
+            if err := RotateLogFile(status.Service.StderrLog, DefaultRotateConfig); err != nil {
+                logger.Printf("[%s] Failed to rotate stderr log: %v", serviceName, err)
+            }
+        }
+
+        status.mutex.RUnlock()
+    }
+
+    // 轮转监控器自身的日志
+    if monitorConfig.LogPath != "" {
+        logFile := filepath.Join(monitorConfig.LogPath, "monitor.log")
+        if err := RotateLogFile(logFile, DefaultRotateConfig); err != nil {
+            logger.Printf("Failed to rotate monitor log: %v", err)
+        }
+    }
 }
 
-func main() {
-    flag.Parse()
+// cleanupExcessiveBackups 清理过多的备份文件
+func cleanupExcessiveBackups() {
+    logger.Println("Cleaning up excessive log backups...")
 
-    if *versionFlag {
-        fmt.Printf("SothothV2 Monitor Agent Version: %s\n", BuildVersion)
-        fmt.Printf("Build Time: %s\n", time.Now().Format("2006-01-02 15:04:05"))
-        return
+    // 检查监控器日志备份
+    if monitorConfig.LogPath != "" {
+        logFile := filepath.Join(monitorConfig.LogPath, "monitor.log")
+        dir := filepath.Dir(logFile)
+        baseName := filepath.Base(logFile)
+        if err := cleanupOldBackups(dir, baseName, DefaultRotateConfig); err != nil {
+            logger.Printf("Failed to cleanup monitor log backups: %v", err)
+        }
     }
 
-    // 新增：创建并获取进程锁，防止重复拉起
-    if err := acquireProcessLock(); err != nil {
-        logger.Fatalf("Failed to acquire process lock: %v", err)
+    // 检查服务日志备份
+    serviceMutex.RLock()
+    defer serviceMutex.RUnlock()
+
+    for serviceName, status := range services {
+        status.mutex.RLock()
+
+        // 清理stdout日志备份
+        if status.Service.StdoutLog != "" {
+            dir := filepath.Dir(status.Service.StdoutLog)
+            baseName := filepath.Base(status.Service.StdoutLog)
+            if err := cleanupOldBackups(dir, baseName, DefaultRotateConfig); err != nil {
+                logger.Printf("[%s] Failed to cleanup stdout log backups: %v", serviceName, err)
+            }
+        }
+
+        // 清理stderr日志备份
+        if status.Service.StderrLog != "" {
+            dir := filepath.Dir(status.Service.StderrLog)
+            baseName := filepath.Base(status.Service.StderrLog)
+            if err := cleanupOldBackups(dir, baseName, DefaultRotateConfig); err != nil {
+                logger.Printf("[%s] Failed to cleanup stderr log backups: %v", serviceName, err)
+            }
+        }
+
+        status.mutex.RUnlock()
     }
-    defer releaseProcessLock()
-
-    // 检查配置文件是否存在
-    if _, err := os.Stat(*configFile); err == nil {
-        loadConfigFromFile(*configFile)
-    } else {
-        loadConfigFromFlags()
-        saveConfigToFile(*configFile)
-    }
-
-    logger.Printf("Starting SothothV2 Agent v%s", BuildVersion)
-
-    // 设置日志级别和路径
-    setupLogger()
-
-    // 检查必要参数
-    if monitorConfig.Workspace == "" || monitorConfig.ProjectID == "" ||
-       monitorConfig.ServerAddr == "" || monitorConfig.ServerPort == "" {
-        logger.Fatal("workspace, project-id, server-addr, server-port are required")
-    }
-
-    // 如果没有UUID，生成一个
-    if monitorConfig.UUID == "" {
-        monitorConfig.UUID = uuid.New().String()
-        saveConfigToFile(*configFile)
-    }
-
-    // 检查并创建cgroup
-    if monitorConfig.EnableCgroup {
-        initCgroup()
-    }
-
-    // 设置信号处理
-    setupSignalHandler()
-
-    // 如果不是前台运行，则作为守护进程运行
-    if !monitorConfig.Foreground && os.Getppid() != 1 {
-        daemonize()
-        return
-    }
-
-    logger.Printf("Agent started. UUID: %s", monitorConfig.UUID)
-    logger.Printf("Workspace: %s", monitorConfig.Workspace)
-    logger.Printf("Project ID: %s", monitorConfig.ProjectID)
-    logger.Printf("Server: %s:%s", monitorConfig.ServerAddr, monitorConfig.ServerPort)
-    logger.Printf("Signal handler installed. Send SIGINT or SIGTERM for graceful shutdown.")
-    logger.Printf("Service stop timeout: %v", ServiceStopTimeout)
-
-    // 初始化服务
-    services = make(map[string]*ServiceStatus)
-    serviceStartOrder = make([]string, 0)
-
-    // 创建service_config目录
-    serviceConfigDir := filepath.Join(monitorConfig.Workspace, "service_config")
-    if err := os.MkdirAll(serviceConfigDir, 0755); err != nil {
-        logger.Printf("Failed to create service config directory: %v", err)
-    }
-
-    // 加载服务配置并输出详细信息
-    loadServiceConfigs(serviceConfigDir)
-
-    // 清理过多的备份文件
-    cleanupExcessiveBackups()
-
-    // 启动cron定时任务
-    startMonitorCron()
-
-    // 启动所有服务
-    startAllServices()
-
-    // 等待关闭信号
-    waitForShutdown()
 }
 
 // ==================== 信号处理和优雅关闭 ====================
@@ -1103,15 +1182,7 @@ func saveConfigToFile(filename string) {
 }
 
 func setupLogger() {
-    if monitorConfig.LogPath != "" {
-        logFile := filepath.Join(monitorConfig.LogPath, "monitor.log")
-        file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-        if err == nil {
-            logger.SetOutput(file)
-        } else {
-            logger.Printf("Failed to open log file: %v", err)
-        }
-    }
+    setupLoggerWithRotation()
 }
 
 func daemonize() {
@@ -1179,18 +1250,18 @@ func loadServiceConfig(filename string) {
     // 设置默认日志路径，确保在日志目录中
     logDir := filepath.Join(serviceConfig.WorkDir, "log")
     if err := os.MkdirAll(logDir, 0755); err != nil {
-        logger.Printf("Failed to create log directory for service %s: %v", serviceName, err)
+        logger.Printf("Failed to create log directory for service %s: %v", serviceConfig.Name, err)
     }
 
     if serviceConfig.StdoutLog == "" {
         // 使用服务名作为日志文件名
-        logFileName := fmt.Sprintf("%s.stdout.log", serviceName)
+        logFileName := fmt.Sprintf("%s.stdout.log", serviceConfig.Name)
         serviceConfig.StdoutLog = filepath.Join(logDir, logFileName)
     }
 
     if serviceConfig.StderrLog == "" {
         // 使用服务名作为日志文件名
-        logFileName := fmt.Sprintf("%s.stderr.log", serviceName)
+        logFileName := fmt.Sprintf("%s.stderr.log", serviceConfig.Name)
         serviceConfig.StderrLog = filepath.Join(logDir, logFileName)
     }
 
@@ -1322,6 +1393,7 @@ func startAllServices() {
 
     logger.Println("==========================================")
 }
+
 func startService(serviceName string) {
     serviceMutex.RLock()
     status, exists := services[serviceName]
@@ -1421,12 +1493,16 @@ func startService(serviceName string) {
     if err == nil {
         cmd.Stdout = stdoutFile
         logger.Printf("[%s] Stdout log (with rotation): %s", serviceName, status.Service.StdoutLog)
+    } else {
+        logger.Printf("[%s] Failed to open stdout log: %v", serviceName, err)
     }
 
     stderrFile, err := openLogFileWithRotation(status.Service.StderrLog, DefaultRotateConfig)
     if err == nil {
         cmd.Stderr = stderrFile
         logger.Printf("[%s] Stderr log (with rotation): %s", serviceName, status.Service.StderrLog)
+    } else {
+        logger.Printf("[%s] Failed to open stderr log: %v", serviceName, err)
     }
 
     logger.Printf("[%s] Working directory: %s", serviceName, status.Service.WorkDir)
@@ -1568,7 +1644,6 @@ func startService(serviceName string) {
     logger.Printf("[%s] ✓ Service started successfully", serviceName)
 }
 
-
 // ==================== 服务监控 ====================
 
 func checkServiceStatus() {
@@ -1702,42 +1777,6 @@ func startMonitorCron() {
     logger.Println("Monitor cron scheduler started")
 }
 
-// rotateAllServiceLogs 轮转所有服务的日志文件
-func rotateAllServiceLogs() {
-    logger.Println("Checking service log files for rotation...")
-
-    serviceMutex.RLock()
-    defer serviceMutex.RUnlock()
-
-    for serviceName, status := range services {
-        status.mutex.RLock()
-
-        // 轮转标准输出日志
-        if status.Service.StdoutLog != "" {
-            if err := RotateLogFile(status.Service.StdoutLog, DefaultRotateConfig); err != nil {
-                logger.Printf("[%s] Failed to rotate stdout log: %v", serviceName, err)
-            }
-        }
-
-        // 轮转标准错误日志
-        if status.Service.StderrLog != "" {
-            if err := RotateLogFile(status.Service.StderrLog, DefaultRotateConfig); err != nil {
-                logger.Printf("[%s] Failed to rotate stderr log: %v", serviceName, err)
-            }
-        }
-
-        status.mutex.RUnlock()
-    }
-
-    // 轮转监控器自身的日志
-    if monitorConfig.LogPath != "" {
-        logFile := filepath.Join(monitorConfig.LogPath, "monitor.log")
-        if err := RotateLogFile(logFile, DefaultRotateConfig); err != nil {
-            logger.Printf("Failed to rotate monitor log: %v", err)
-        }
-    }
-}
-
 func printStatusReport() {
     // 检查是否正在关闭
     shutdownMutex.RLock()
@@ -1752,7 +1791,22 @@ func printStatusReport() {
     logger.Printf("Agent UUID: %s", monitorConfig.UUID)
     logger.Printf("Uptime: %s", time.Now().Format("2006-01-02 15:04:05"))
     logger.Printf("Total services: %d", len(services))
-  // 添加日志文件信息
+
+    serviceMutex.RLock()
+    defer serviceMutex.RUnlock()
+
+    runningCount := 0
+    for _, status := range services {
+        status.mutex.RLock()
+        if status.IsRunning {
+            runningCount++
+        }
+        status.mutex.RUnlock()
+    }
+
+    logger.Printf("Services running: %d/%d", runningCount, len(services))
+
+    // 添加日志文件信息
     logger.Println("========== Log File Status ==========")
 
     // 检查监控器日志
@@ -1764,21 +1818,17 @@ func printStatusReport() {
         }
     }
 
-    serviceMutex.RLock()
-    defer serviceMutex.RUnlock()
-
-    runningCount := 0
-    for _, status := range services {
+    for name, status := range services {
         status.mutex.RLock()
-        if status.IsRunning {
-            runningCount++
-        }
+
         // 检查stdout日志
         if status.Service.StdoutLog != "" {
             if info, err := os.Stat(status.Service.StdoutLog); err == nil {
                 sizeMB := float64(info.Size()) / (1024 * 1024)
                 if sizeMB > 4.5 { // 接近5MB时警告
                     logger.Printf("[%s] Stdout log: %.2f MB (接近限制)", name, sizeMB)
+                } else {
+                    logger.Printf("[%s] Stdout log: %.2f MB", name, sizeMB)
                 }
             }
         }
@@ -1789,57 +1839,16 @@ func printStatusReport() {
                 sizeMB := float64(info.Size()) / (1024 * 1024)
                 if sizeMB > 4.5 { // 接近5MB时警告
                     logger.Printf("[%s] Stderr log: %.2f MB (接近限制)", name, sizeMB)
+                } else {
+                    logger.Printf("[%s] Stderr log: %.2f MB", name, sizeMB)
                 }
             }
         }
+
         status.mutex.RUnlock()
     }
 
-    logger.Printf("Services running: %d/%d", runningCount, len(services))
     logger.Println("==================================")
-}
-
-// cleanupExcessiveBackups 清理过多的备份文件
-func cleanupExcessiveBackups() {
-    logger.Println("Cleaning up excessive log backups...")
-
-    // 检查监控器日志备份
-    if monitorConfig.LogPath != "" {
-        logFile := filepath.Join(monitorConfig.LogPath, "monitor.log")
-        dir := filepath.Dir(logFile)
-        baseName := filepath.Base(logFile)
-        if err := cleanupOldBackups(dir, baseName, DefaultRotateConfig); err != nil {
-            logger.Printf("Failed to cleanup monitor log backups: %v", err)
-        }
-    }
-
-    // 检查服务日志备份
-    serviceMutex.RLock()
-    defer serviceMutex.RUnlock()
-
-    for serviceName, status := range services {
-        status.mutex.RLock()
-
-        // 清理stdout日志备份
-        if status.Service.StdoutLog != "" {
-            dir := filepath.Dir(status.Service.StdoutLog)
-            baseName := filepath.Base(status.Service.StdoutLog)
-            if err := cleanupOldBackups(dir, baseName, DefaultRotateConfig); err != nil {
-                logger.Printf("[%s] Failed to cleanup stdout log backups: %v", serviceName, err)
-            }
-        }
-
-        // 清理stderr日志备份
-        if status.Service.StderrLog != "" {
-            dir := filepath.Dir(status.Service.StderrLog)
-            baseName := filepath.Base(status.Service.StderrLog)
-            if err := cleanupOldBackups(dir, baseName, DefaultRotateConfig); err != nil {
-                logger.Printf("[%s] Failed to cleanup stderr log backups: %v", serviceName, err)
-            }
-        }
-
-        status.mutex.RUnlock()
-    }
 }
 
 // ==================== 主循环 ====================
