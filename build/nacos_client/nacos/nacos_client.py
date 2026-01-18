@@ -2670,6 +2670,7 @@ def main():
     except Exception as e:
         logger.error(f"Docker客户端初始化失败: {e}")
         docker_client = None
+        exit(255)
 
     # 启动服务器
     server = WebServer(args.config)
