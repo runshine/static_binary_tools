@@ -19,6 +19,10 @@ import (
     "github.com/google/uuid"
     "gopkg.in/ini.v1"
     "github.com/robfig/cron/v3"
+    "compress/gzip"
+    "io"
+    "path/filepath"
+    "regexp"
 )
 
 // Monitor配置结构体
@@ -110,6 +114,191 @@ const (
     ServiceStopTimeout = 10 * time.Second  // 服务停止超时时间
 )
 
+// ==================== 日志轮转 ====================
+
+// RotateConfig 日志轮转配置
+type RotateConfig struct {
+    MaxSize        int64  // 最大文件大小（字节）
+    MaxBackups     int    // 最大备份文件数量
+    Compress       bool   // 是否压缩旧日志
+    CompressSuffix string // 压缩文件后缀
+}
+
+// DefaultRotateConfig 默认轮转配置
+var DefaultRotateConfig = RotateConfig{
+    MaxSize:        5 * 1024 * 1024, // 5MB
+    MaxBackups:     2,               // 保留2个压缩文件
+    Compress:       true,
+    CompressSuffix: ".gz",
+}
+
+// RotateLogFile 轮转日志文件
+func RotateLogFile(filename string, config RotateConfig) error {
+    // 检查文件是否存在
+    if _, err := os.Stat(filename); os.IsNotExist(err) {
+        return nil // 文件不存在，无需轮转
+    }
+
+    // 检查文件大小
+    info, err := os.Stat(filename)
+    if err != nil {
+        return fmt.Errorf("failed to stat log file: %v", err)
+    }
+
+    // 如果文件小于最大大小，不轮转
+    if info.Size() < config.MaxSize {
+        return nil
+    }
+
+    // 生成时间戳
+    timestamp := time.Now().Format("20060102-150405")
+
+    // 构建备份文件名
+    baseDir := filepath.Dir(filename)
+    baseName := filepath.Base(filename)
+    backupName := fmt.Sprintf("%s.%s", baseName, timestamp)
+
+    var backupPath string
+    if config.Compress {
+        backupPath = filepath.Join(baseDir, backupName+config.CompressSuffix)
+    } else {
+        backupPath = filepath.Join(baseDir, backupName)
+    }
+
+    // 创建备份文件
+    if config.Compress {
+        if err := compressFile(filename, backupPath); err != nil {
+            return fmt.Errorf("failed to compress log file: %v", err)
+        }
+    } else {
+        if err := os.Rename(filename, backupPath); err != nil {
+            return fmt.Errorf("failed to rename log file: %v", err)
+        }
+    }
+
+    // 清理旧的备份文件
+    if err := cleanupOldBackups(baseDir, baseName, config); err != nil {
+        logger.Printf("Failed to cleanup old backups: %v", err)
+    }
+
+    // 创建新的日志文件
+    file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+    if err != nil {
+        return fmt.Errorf("failed to create new log file: %v", err)
+    }
+    file.Close()
+
+    logger.Printf("Rotated log file: %s -> %s", filename, filepath.Base(backupPath))
+    return nil
+}
+
+// compressFile 压缩文件
+func compressFile(src, dst string) error {
+    // 打开源文件
+    srcFile, err := os.Open(src)
+    if err != nil {
+        return err
+    }
+    defer srcFile.Close()
+
+    // 创建目标文件
+    dstFile, err := os.Create(dst)
+    if err != nil {
+        return err
+    }
+    defer dstFile.Close()
+
+    // 创建gzip writer
+    gzWriter := gzip.NewWriter(dstFile)
+    defer gzWriter.Close()
+
+    // 复制数据
+    if _, err := io.Copy(gzWriter, srcFile); err != nil {
+        return err
+    }
+
+    // 关闭gzip writer以确保所有数据写入
+    if err := gzWriter.Close(); err != nil {
+        return err
+    }
+
+    // 删除源文件
+    if err := os.Remove(src); err != nil {
+        return err
+    }
+
+    return nil
+}
+
+// cleanupOldBackups 清理旧的备份文件
+func cleanupOldBackups(dir, baseName string, config RotateConfig) error {
+    pattern := fmt.Sprintf("%s.*", baseName)
+    if config.Compress {
+        pattern += config.CompressSuffix
+    }
+
+    files, err := filepath.Glob(filepath.Join(dir, pattern))
+    if err != nil {
+        return err
+    }
+
+    // 如果文件数量不超过最大备份数量，直接返回
+    if len(files) <= config.MaxBackups {
+        return nil
+    }
+
+    // 按修改时间排序（从旧到新）
+    sort.Slice(files, func(i, j int) bool {
+        info1, _ := os.Stat(files[i])
+        info2, _ := os.Stat(files[j])
+        return info1.ModTime().Before(info2.ModTime())
+    })
+
+    // 删除最旧的文件，直到数量符合要求
+    for i := 0; i < len(files)-config.MaxBackups; i++ {
+        if err := os.Remove(files[i]); err != nil {
+            logger.Printf("Failed to remove old backup %s: %v", files[i], err)
+        } else {
+            logger.Printf("Removed old backup: %s", filepath.Base(files[i]))
+        }
+    }
+
+    return nil
+}
+
+// openLogFileWithRotation 打开日志文件并检查是否需要轮转
+func openLogFileWithRotation(filename string, config RotateConfig) (*os.File, error) {
+    // 确保目录存在
+    dir := filepath.Dir(filename)
+    if err := os.MkdirAll(dir, 0755); err != nil {
+        return nil, fmt.Errorf("failed to create log directory: %v", err)
+    }
+
+    // 检查是否需要轮转
+    if err := RotateLogFile(filename, config); err != nil {
+        logger.Printf("Failed to rotate log file %s: %v", filename, err)
+    }
+
+    // 打开日志文件
+    return os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+}
+
+// setupLoggerWithRotation 设置带轮转的日志
+func setupLoggerWithRotation() {
+    if monitorConfig.LogPath != "" {
+        logFile := filepath.Join(monitorConfig.LogPath, "monitor.log")
+
+        // 使用带轮转的日志文件打开
+        file, err := openLogFileWithRotation(logFile, DefaultRotateConfig)
+        if err == nil {
+            logger.SetOutput(file)
+            logger.Printf("Monitor log file with rotation enabled: %s", logFile)
+        } else {
+            logger.Printf("Failed to open log file: %v", err)
+        }
+    }
+}
+
 func init() {
     // 初始化日志
     logger = log.New(os.Stdout, fmt.Sprintf("[SothothV2 %s] ", BuildVersion), log.LstdFlags|log.Lshortfile)
@@ -191,6 +380,9 @@ func main() {
 
     // 加载服务配置并输出详细信息
     loadServiceConfigs(serviceConfigDir)
+
+    // 清理过多的备份文件
+    cleanupExcessiveBackups()
 
     // 启动cron定时任务
     startMonitorCron()
@@ -984,17 +1176,22 @@ func loadServiceConfig(filename string) {
         serviceConfig.WorkDir = monitorConfig.Workspace
     }
 
+    // 设置默认日志路径，确保在日志目录中
+    logDir := filepath.Join(serviceConfig.WorkDir, "log")
+    if err := os.MkdirAll(logDir, 0755); err != nil {
+        logger.Printf("Failed to create log directory for service %s: %v", serviceName, err)
+    }
+
     if serviceConfig.StdoutLog == "" {
-        logDir := filepath.Join(serviceConfig.WorkDir, "log")
-        os.MkdirAll(logDir, 0755)
-        serviceConfig.StdoutLog = filepath.Join(logDir,
-            filepath.Base(filename)+".stdout.log")
+        // 使用服务名作为日志文件名
+        logFileName := fmt.Sprintf("%s.stdout.log", serviceName)
+        serviceConfig.StdoutLog = filepath.Join(logDir, logFileName)
     }
 
     if serviceConfig.StderrLog == "" {
-        logDir := filepath.Join(serviceConfig.WorkDir, "log")
-        serviceConfig.StderrLog = filepath.Join(logDir,
-            filepath.Base(filename)+".stderr.log")
+        // 使用服务名作为日志文件名
+        logFileName := fmt.Sprintf("%s.stderr.log", serviceName)
+        serviceConfig.StderrLog = filepath.Join(logDir, logFileName)
     }
 
     if serviceConfig.MonitorMode == "" {
@@ -1219,19 +1416,17 @@ func startService(serviceName string) {
         }
     }
 
-    // 重定向标准输出和错误输出
-    stdoutFile, err := os.OpenFile(status.Service.StdoutLog,
-        os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+    // 重定向标准输出和错误输出 - 使用带轮转的日志文件
+    stdoutFile, err := openLogFileWithRotation(status.Service.StdoutLog, DefaultRotateConfig)
     if err == nil {
         cmd.Stdout = stdoutFile
-        logger.Printf("[%s] Stdout log: %s", serviceName, status.Service.StdoutLog)
+        logger.Printf("[%s] Stdout log (with rotation): %s", serviceName, status.Service.StdoutLog)
     }
 
-    stderrFile, err := os.OpenFile(status.Service.StderrLog,
-        os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+    stderrFile, err := openLogFileWithRotation(status.Service.StderrLog, DefaultRotateConfig)
     if err == nil {
         cmd.Stderr = stderrFile
-        logger.Printf("[%s] Stderr log: %s", serviceName, status.Service.StderrLog)
+        logger.Printf("[%s] Stderr log (with rotation): %s", serviceName, status.Service.StderrLog)
     }
 
     logger.Printf("[%s] Working directory: %s", serviceName, status.Service.WorkDir)
@@ -1498,8 +1693,49 @@ func startMonitorCron() {
         printStatusReport()
     })
 
+    // 每小时检查一次日志轮转
+    cronScheduler.AddFunc("@hourly", func() {
+        rotateAllServiceLogs()
+    })
+
     cronScheduler.Start()
     logger.Println("Monitor cron scheduler started")
+}
+
+// rotateAllServiceLogs 轮转所有服务的日志文件
+func rotateAllServiceLogs() {
+    logger.Println("Checking service log files for rotation...")
+
+    serviceMutex.RLock()
+    defer serviceMutex.RUnlock()
+
+    for serviceName, status := range services {
+        status.mutex.RLock()
+
+        // 轮转标准输出日志
+        if status.Service.StdoutLog != "" {
+            if err := RotateLogFile(status.Service.StdoutLog, DefaultRotateConfig); err != nil {
+                logger.Printf("[%s] Failed to rotate stdout log: %v", serviceName, err)
+            }
+        }
+
+        // 轮转标准错误日志
+        if status.Service.StderrLog != "" {
+            if err := RotateLogFile(status.Service.StderrLog, DefaultRotateConfig); err != nil {
+                logger.Printf("[%s] Failed to rotate stderr log: %v", serviceName, err)
+            }
+        }
+
+        status.mutex.RUnlock()
+    }
+
+    // 轮转监控器自身的日志
+    if monitorConfig.LogPath != "" {
+        logFile := filepath.Join(monitorConfig.LogPath, "monitor.log")
+        if err := RotateLogFile(logFile, DefaultRotateConfig); err != nil {
+            logger.Printf("Failed to rotate monitor log: %v", err)
+        }
+    }
 }
 
 func printStatusReport() {
@@ -1516,6 +1752,17 @@ func printStatusReport() {
     logger.Printf("Agent UUID: %s", monitorConfig.UUID)
     logger.Printf("Uptime: %s", time.Now().Format("2006-01-02 15:04:05"))
     logger.Printf("Total services: %d", len(services))
+  // 添加日志文件信息
+    logger.Println("========== Log File Status ==========")
+
+    // 检查监控器日志
+    if monitorConfig.LogPath != "" {
+        logFile := filepath.Join(monitorConfig.LogPath, "monitor.log")
+        if info, err := os.Stat(logFile); err == nil {
+            sizeMB := float64(info.Size()) / (1024 * 1024)
+            logger.Printf("Monitor log: %.2f MB", sizeMB)
+        }
+    }
 
     serviceMutex.RLock()
     defer serviceMutex.RUnlock()
@@ -1526,11 +1773,73 @@ func printStatusReport() {
         if status.IsRunning {
             runningCount++
         }
+        // 检查stdout日志
+        if status.Service.StdoutLog != "" {
+            if info, err := os.Stat(status.Service.StdoutLog); err == nil {
+                sizeMB := float64(info.Size()) / (1024 * 1024)
+                if sizeMB > 4.5 { // 接近5MB时警告
+                    logger.Printf("[%s] Stdout log: %.2f MB (接近限制)", name, sizeMB)
+                }
+            }
+        }
+
+        // 检查stderr日志
+        if status.Service.StderrLog != "" {
+            if info, err := os.Stat(status.Service.StderrLog); err == nil {
+                sizeMB := float64(info.Size()) / (1024 * 1024)
+                if sizeMB > 4.5 { // 接近5MB时警告
+                    logger.Printf("[%s] Stderr log: %.2f MB (接近限制)", name, sizeMB)
+                }
+            }
+        }
         status.mutex.RUnlock()
     }
 
     logger.Printf("Services running: %d/%d", runningCount, len(services))
     logger.Println("==================================")
+}
+
+// cleanupExcessiveBackups 清理过多的备份文件
+func cleanupExcessiveBackups() {
+    logger.Println("Cleaning up excessive log backups...")
+
+    // 检查监控器日志备份
+    if monitorConfig.LogPath != "" {
+        logFile := filepath.Join(monitorConfig.LogPath, "monitor.log")
+        dir := filepath.Dir(logFile)
+        baseName := filepath.Base(logFile)
+        if err := cleanupOldBackups(dir, baseName, DefaultRotateConfig); err != nil {
+            logger.Printf("Failed to cleanup monitor log backups: %v", err)
+        }
+    }
+
+    // 检查服务日志备份
+    serviceMutex.RLock()
+    defer serviceMutex.RUnlock()
+
+    for serviceName, status := range services {
+        status.mutex.RLock()
+
+        // 清理stdout日志备份
+        if status.Service.StdoutLog != "" {
+            dir := filepath.Dir(status.Service.StdoutLog)
+            baseName := filepath.Base(status.Service.StdoutLog)
+            if err := cleanupOldBackups(dir, baseName, DefaultRotateConfig); err != nil {
+                logger.Printf("[%s] Failed to cleanup stdout log backups: %v", serviceName, err)
+            }
+        }
+
+        // 清理stderr日志备份
+        if status.Service.StderrLog != "" {
+            dir := filepath.Dir(status.Service.StderrLog)
+            baseName := filepath.Base(status.Service.StderrLog)
+            if err := cleanupOldBackups(dir, baseName, DefaultRotateConfig); err != nil {
+                logger.Printf("[%s] Failed to cleanup stderr log backups: %v", serviceName, err)
+            }
+        }
+
+        status.mutex.RUnlock()
+    }
 }
 
 // ==================== 主循环 ====================
