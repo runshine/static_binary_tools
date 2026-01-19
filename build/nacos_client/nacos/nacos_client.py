@@ -684,7 +684,7 @@ class ServiceManager:
 
     def get_compose_file(self, service_name: str) -> Path:
         """获取compose文件路径"""
-        return self.get_service_path(service_name) / 'service.yaml'
+        return self.get_service_path(service_name) / 'docker-compse.yaml'
 
     def parse_compose_file(self, compose_file: Path) -> Dict:
         """解析compose文件"""
@@ -881,7 +881,7 @@ class ServiceManager:
             service_path.mkdir(parents=True, exist_ok=False)
 
             # 保存YAML文件
-            compose_file = service_path / 'service.yaml'
+            compose_file = service_path / 'docker-compose.yaml'
             with open(compose_file, 'w', encoding='utf-8') as f:
                 f.write(yaml_content)
 
@@ -932,16 +932,12 @@ class ServiceManager:
             with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
                 zip_ref.extractall(temp_dir)
 
-            # 查找service.yaml文件
-            yaml_files = list(Path(temp_dir).rglob('service.yaml'))
-            yaml_files.extend(list(Path(temp_dir).rglob('docker-compose.yaml')))
+            # 查找docker-compose.yaml文件
+            yaml_files = list(Path(temp_dir).rglob('docker-compose.yaml'))
             yaml_files.extend(list(Path(temp_dir).rglob('docker-compose.yml')))
-            yaml_files.extend(list(Path(temp_dir).rglob('compose.yaml')))
-            yaml_files.extend(list(Path(temp_dir).rglob('compose.yml')))
-
             if not yaml_files:
                 shutil.rmtree(temp_dir, ignore_errors=True)
-                return False, "未找到service.yaml、docker-compose.yaml、docker-compose.yml、compose.yaml或compose.yml文件"
+                return False, "未找到docker-compose.yaml、docker-compose.yml文件"
 
             # 使用第一个找到的YAML文件
             source_yaml = yaml_files[0]
@@ -964,11 +960,11 @@ class ServiceManager:
                 else:
                     shutil.copy2(item, dest)
 
-            # 确保service.yaml文件存在（如果原文件名不是service.yaml）
-            target_yaml = service_path / 'service.yaml'
+            # 确保docker-compose.yaml文件存在（如果原文件名不是docker-compose.yaml）
+            target_yaml = service_path / 'docker-compose.yaml'
             if not target_yaml.exists():
-                # 如果源文件是docker-compose.yaml/compose.yaml等，重命名为service.yaml
-                if source_yaml.name in ['docker-compose.yaml', 'docker-compose.yml', 'compose.yaml', 'compose.yml']:
+                # 如果源文件是docker-compose.yaml/compose.yaml等，重命名为docker-compose.yaml
+                if source_yaml.name in ['docker-compose.yml', 'compose.yaml', 'compose.yml']:
                     shutil.copy2(source_yaml, target_yaml)
                 else:
                     # 否则保持原文件名
@@ -2217,12 +2213,12 @@ def validate_data_consistency():
                 })
                 continue
 
-            # 检查service.yaml文件是否存在
-            compose_file = service_path / 'service.yaml'
+            # 检查docker-compose.yaml文件是否存在
+            compose_file = service_path / 'docker-compose.yaml'
             if not compose_file.exists():
                 validation_results['inconsistent'].append({
                     'service': service_name,
-                    'issue': 'service.yaml文件不存在',
+                    'issue': 'docker-compose.yaml文件不存在',
                     'db_path': db_path,
                     'actual_path': str(compose_file)
                 })
@@ -2237,7 +2233,7 @@ def validate_data_consistency():
                     if not parsed or 'services' not in parsed:
                         validation_results['inconsistent'].append({
                             'service': service_name,
-                            'issue': 'service.yaml格式错误',
+                            'issue': 'docker-compose.yaml格式错误',
                             'db_path': db_path,
                             'actual_path': str(compose_file)
                         })
@@ -2264,11 +2260,10 @@ def validate_data_consistency():
             for item in compose_root.iterdir():
                 if item.is_dir():
                     # 检查是否是docker-compose服务目录
-                    service_yaml = item / 'service.yaml'
                     docker_compose_yaml = item / 'docker-compose.yaml'
                     docker_compose_yml = item / 'docker-compose.yml'
 
-                    if service_yaml.exists() or docker_compose_yaml.exists() or docker_compose_yml.exists():
+                    if docker_compose_yaml.exists() or docker_compose_yml.exists():
                         # 检查数据库中是否有记录
                         db_record = db_conn.execute(
                             "SELECT name FROM services WHERE name = ? OR path = ?",
@@ -2491,11 +2486,10 @@ def fix_validation_issues():
             if compose_root.exists():
                 for item in compose_root.iterdir():
                     if item.is_dir():
-                        service_yaml = item / 'service.yaml'
                         docker_compose_yaml = item / 'docker-compose.yaml'
                         docker_compose_yml = item / 'docker-compose.yml'
 
-                        if service_yaml.exists() or docker_compose_yaml.exists() or docker_compose_yml.exists():
+                        if docker_compose_yaml.exists() or docker_compose_yml.exists():
                             # 检查数据库中是否有记录
                             db_record = db_conn.execute(
                                 "SELECT name FROM services WHERE name = ? OR path = ?",
@@ -2511,9 +2505,7 @@ def fix_validation_issues():
                                         service_name = None
                                         yaml_file = None
 
-                                        if service_yaml.exists():
-                                            yaml_file = service_yaml
-                                        elif docker_compose_yaml.exists():
+                                        if docker_compose_yaml.exists():
                                             yaml_file = docker_compose_yaml
                                         elif docker_compose_yml.exists():
                                             yaml_file = docker_compose_yml
