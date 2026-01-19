@@ -2,6 +2,11 @@ import threading
 from common_utils import *
 from urllib.parse import urlparse
 
+
+def start_nacos_client_service():
+    global g_node_uuid
+    start_nacos_service("nacos-client","11197",{'uuid': g_node_uuid, 'ip': get_sothoth_ip_address()},check_tcp_port_is_listen,11197)
+
 def start_ttyd_service():
     start_nacos_service("ttyd","11198",translate_ipv4_list_to_map(get_ipv4_addresses()),check_tcp_port_is_listen,11198)
 
@@ -33,12 +38,14 @@ def graceful_exit(signum, frame):
     sys.exit(0)
 
 
-def start_nacos(UPSTREAM_SERVER_URL,WORKSPACE_ID):
+def start_nacos(UPSTREAM_SERVER_URL,WORKSPACE_ID,NODE_UUID):
     parsed = urlparse(UPSTREAM_SERVER_URL)
     protocol = parsed.scheme
     host = parsed.hostname
     port = parsed.port
-    setup_nacos_server(server_ip=host,server_port=int(port),heartbeat_time=5,workspace_id=WORKSPACE_ID)
+    setup_nacos_server(server_ip=host,server_port=int(port),heartbeat_time=5,workspace_id=WORKSPACE_ID,node_uuid=NODE_UUID)
+    nacos_client_thread = threading.Thread(target=start_nacos_client_service)
+    nacos_client_thread.start()
     ttyd_thread = threading.Thread(target=start_ttyd_service)
     ttyd_thread.start()
     sshd_thread = threading.Thread(target=start_openssh_service)
@@ -51,6 +58,7 @@ def start_nacos(UPSTREAM_SERVER_URL,WORKSPACE_ID):
     frida_server_thread.start()
     rpcapd_thread = threading.Thread(target=start_rpcapd_service)
     rpcapd_thread.start()
+    nacos_client_thread.join()
     ttyd_thread.join()
     sshd_thread.join()
     nginx_proxy_thread.join()

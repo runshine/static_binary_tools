@@ -165,8 +165,9 @@ g_nacos_server_ip = None
 g_nacos_server_port = None
 g_nacos_heartbeat_time = None
 g_workspace_id = None
+g_node_uuid = None
 
-def setup_nacos_server(server_ip = None,server_port = None,heartbeat_time = 5,workspace_id = "default"):
+def setup_nacos_server(server_ip = None,server_port = None,heartbeat_time = 5,workspace_id = "default",node_uuid = None):
     global g_nacos_server_ip,g_nacos_server_port,g_nacos_heartbeat_time,g_workspace_id
     if server_port is None or server_port is None:
         ip_address = get_sothoth_ip_address()
@@ -174,11 +175,13 @@ def setup_nacos_server(server_ip = None,server_port = None,heartbeat_time = 5,wo
         g_nacos_server_port = "8848"
         g_nacos_heartbeat_time = heartbeat_time
         g_workspace_id = workspace_id
+        g_node_uuid = node_uuid
     else:
         g_nacos_server_ip = server_ip
         g_nacos_server_port = server_port
         g_nacos_heartbeat_time = heartbeat_time
         g_workspace_id = workspace_id
+        g_node_uuid = node_uuid
     logging.getLogger().info("start setup nacos server, server is: {}:{}".format(g_nacos_server_ip,g_nacos_server_port))
 
 
@@ -201,7 +204,7 @@ def nacos_service_register(service_name,service_ip,service_port,metadata = None)
     url = "{}?{}".format(url,urlencode(params))
     try:
         res = requests.post(url)
-        logging.getLogger().info(f"向nacos注册中心，发起服务注册请求，注册响应状态： {res.status_code}, {service_name}-->{service_ip}:{service_port}")
+        #logging.getLogger().info(f"向nacos注册中心，发起服务注册请求，注册响应状态： {res.status_code}, {service_name}-->{service_ip}:{service_port}")
         if res.status_code != 200:
             logging.getLogger().warning(f"response not ok: {res.json()}" )
             return False
@@ -275,7 +278,7 @@ def start_nacos_service(service_name,port,metadata = None, health_check_fun=None
     metadata['service_port'] = port
     metadata['hostname'] = socket.gethostname()
     ip_address = get_sothoth_ip_address()
-    service_name = "{}-{}".format(socket.gethostname(),ip_address)
+    service_name = "{}-{}-{}".format(g_workspace_id,socket.gethostname(),ip_address)
     while register_retry > 0 and not nacos_service_register(service_name,ip_address,port,metadata):
         register_retry = register_retry -1
         logging.getLogger().warning(f"Failed register to nacos server, retry: {register_retry}")
@@ -313,7 +316,7 @@ def start_nacos_service(service_name,port,metadata = None, health_check_fun=None
                 logging.getLogger().warning(f"Failed check service exist, retry register it: {service_name}")
                 nacos_service_register(service_name,ip_address,port,metadata)
             else:
-                logging.getLogger().info(f"Check service: {service_name} exist ok")
+                #logging.getLogger().info(f"Check service: {service_name} exist ok")
                 nacos_service_register(service_name,ip_address,port,metadata)
 
 

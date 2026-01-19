@@ -14,6 +14,7 @@ import argparse
 import subprocess
 import tempfile
 import zipfile
+import tarfile
 import shutil
 import time
 import uuid
@@ -29,6 +30,7 @@ import platform
 import socket
 import mimetypes
 import re
+import configparser
 
 from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
@@ -678,13 +680,169 @@ class ServiceManager:
         except Exception as e:
             return False, f"验证失败: {str(e)}"
 
+    def get_file_type(self, file_path: Path) -> str:
+        """获取文件类型"""
+        if file_path.is_dir():
+            return 'directory'
+
+        # 检查常见文件类型
+        ext = file_path.suffix.lower()
+        if ext in ['.yaml', '.yml']:
+            return 'yaml'
+        elif ext in ['.json']:
+            return 'json'
+        elif ext in ['.py']:
+            return 'python'
+        elif ext in ['.sh']:
+            return 'shell'
+        elif ext in ['.md', '.txt']:
+            return 'text'
+        elif ext in ['.html', '.htm']:
+            return 'html'
+        elif ext in ['.css']:
+            return 'css'
+        elif ext in ['.js']:
+            return 'javascript'
+        elif ext in ['.xml']:
+            return 'xml'
+        elif ext in ['.sql']:
+            return 'sql'
+        else:
+            return 'binary'
+    def get_service_directory_structure(self, service_name: str) -> Dict[str, Any]:
+        """获取服务文件夹结构"""
+        try:
+            service_path = self.get_service_path(service_name)
+
+            if not service_path.exists():
+                return {'error': f'服务 {service_name} 不存在'}
+
+            result = {
+                'service_name': service_name,
+                'path': str(service_path),
+                'structure': self._scan_directory(service_path)
+            }
+
+            return result
+        except Exception as e:
+            logger.error(f"获取服务文件夹结构失败: {e}")
+            return {'error': str(e)}
+
+    def _scan_directory(self, path: Path, depth: int = 0, max_depth: int = 10) -> Dict[str, Any]:
+        """递归扫描目录结构"""
+        if depth > max_depth:
+            return {'name': path.name, 'type': 'directory', 'error': '深度限制'}
+
+        try:
+            result = {
+                'name': path.name,
+                'path': str(path),
+                'type': 'directory',
+                'modified': datetime.fromtimestamp(path.stat().st_mtime).isoformat(),
+                'children': []
+            }
+
+            # 遍历目录内容
+            for item in sorted(path.iterdir()):
+                if item.is_dir():
+                    result['children'].append(self._scan_directory(item, depth + 1, max_depth))
+                else:
+                    file_info = {
+                        'name': item.name,
+                        'path': str(item),
+                        'type': 'file',
+                        'size': item.stat().st_size,
+                        'modified': datetime.fromtimestamp(item.stat().st_mtime).isoformat(),
+                        'extension': item.suffix.lower()
+                    }
+                    result['children'].append(file_info)
+
+            return result
+        except Exception as e:
+            return {'name': path.name, 'type': 'directory', 'error': str(e)}
+
+    def get_service_file(self, service_name: str, file_path: str) -> Tuple[bool, str, bytes]:
+        """获取服务文件内容"""
+        try:
+            service_path = self.get_service_path(service_name)
+
+            if not service_path.exists():
+                return False, f"服务 {service_name} 不存在", b""
+
+            # 构建完整路径并安全检查
+            target_path = (service_path / file_path).resolve()
+
+            # 检查是否在服务目录内
+            if not str(target_path).startswith(str(service_path.resolve())):
+                return False, "非法文件路径", b""
+
+            if not target_path.exists():
+                return False, f"文件不存在: {file_path}", b""
+
+            if not target_path.is_file():
+                return False, f"不是文件: {file_path}", b""
+
+            # 读取文件内容
+            with open(target_path, 'rb') as f:
+                content = f.read()
+
+            return True, "成功", content
+
+        except Exception as e:
+            logger.error(f"获取服务文件失败: {e}")
+            return False, str(e), b""
+
+    def update_service_file(self, service_name: str, file_path: str, content: bytes) -> Tuple[bool, str]:
+        """更新服务文件内容"""
+        try:
+            service_path = self.get_service_path(service_name)
+
+            if not service_path.exists():
+                return False, f"服务 {service_name} 不存在"
+
+            # 构建完整路径并安全检查
+            target_path = (service_path / file_path).resolve()
+
+            # 检查是否在服务目录内
+            if not str(target_path).startswith(str(service_path.resolve())):
+                return False, "非法文件路径"
+
+            # 确保目录存在
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # 备份原文件（如果存在）
+            if target_path.exists():
+                backup_path = target_path.with_suffix(f"{target_path.suffix}.backup.{datetime.now().strftime('%Y%m%d%H%M%S')}")
+                shutil.copy2(target_path, backup_path)
+                logger.info(f"备份文件: {backup_path}")
+
+            # 写入新内容
+            with open(target_path, 'wb') as f:
+                f.write(content)
+
+            # 如果是docker-compose文件，验证格式
+            if target_path.name in ['docker-compose.yaml', 'docker-compose.yml', 'compose.yaml', 'compose.yml']:
+                is_valid, error_msg = self.validate_compose_file(target_path)
+                if not is_valid:
+                    # 恢复备份
+                    if target_path.exists() and backup_path and backup_path.exists():
+                        shutil.copy2(backup_path, target_path)
+                    return False, f"YAML验证失败: {error_msg}"
+
+            logger.info(f"更新服务文件成功: {target_path}")
+            return True, "文件更新成功"
+
+        except Exception as e:
+            logger.error(f"更新服务文件失败: {e}")
+            return False, str(e)
+
     def get_service_path(self, service_name: str) -> Path:
         """获取服务路径"""
         return self.compose_root / service_name
 
     def get_compose_file(self, service_name: str) -> Path:
         """获取compose文件路径"""
-        return self.get_service_path(service_name) / 'docker-compse.yaml'
+        return self.get_service_path(service_name) / 'docker-compose.yaml'
 
     def parse_compose_file(self, compose_file: Path) -> Dict:
         """解析compose文件"""
@@ -705,7 +863,7 @@ class ServiceManager:
             # 获取项目名称（使用文件夹名）
             project_name = service_name
 
-            # 使用docker-compose ps命令获取容器状态
+            # 方法1：使用JSON Lines格式输出（每行一个JSON对象）
             cmd = [
                 self.docker_compose_bin,
                 '-f', str(compose_file),
@@ -718,46 +876,53 @@ class ServiceManager:
                 cmd,
                 capture_output=True,
                 text=True,
-                cwd=self.get_service_path(service_name),
                 env=self.get_env_with_docker_host()
             )
 
             if result.returncode == 0:
-                try:
-                    # 修复：检查输出是否为空
-                    if not result.stdout.strip():
-                        return {
-                            'status': 'stopped',
-                            'containers': [],
-                            'running': 0,
-                            'total': 0
-                        }
+                containers = []
+                output = result.stdout.strip()
 
-                    containers = json.loads(result.stdout)
-                    if not isinstance(containers, list):
-                        # 如果返回的不是列表，可能是空对象或其他格式
-                        containers = []
+                # 方法1：处理JSON Lines格式
+                if output:
+                    # 方法1a：使用jsonlines库（如果安装）
+                    try:
+                        import jsonlines
+                        with jsonlines.Reader(output.splitlines()) as reader:
+                            containers = list(reader)
+                    except ImportError:
+                        # 方法1b：手动处理每行JSON
+                        for line in output.splitlines():
+                            if line.strip():
+                                try:
+                                    containers.append(json.loads(line.strip()))
+                                except json.JSONDecodeError:
+                                    continue
 
-                    running_count = sum(1 for c in containers if c.get('State') == 'running')
-                    total_count = len(containers)
+                    # 方法2：如果输出是单个JSON对象
+                    if not containers:
+                        try:
+                            data = json.loads(output)
+                            if isinstance(data, list):
+                                containers = data
+                            elif isinstance(data, dict):
+                                containers = [data]
+                        except json.JSONDecodeError:
+                            pass
 
-                    status = 'running' if running_count == total_count > 0 else 'partially_running'
-                    if total_count == 0:
-                        status = 'stopped'
+                running_count = sum(1 for c in containers if c.get('State') == 'running')
+                total_count = len(containers)
 
-                    return {
-                        'status': status,
-                        'containers': containers,
-                        'running': running_count,
-                        'total': total_count
-                    }
-                except json.JSONDecodeError as e:
-                    logger.error(f"解析docker-compose输出JSON失败: {e}, 输出: {result.stdout[:200]}")
-                    return {
-                        'status': 'unknown',
-                        'containers': [],
-                        'error': f'JSON解析失败: {str(e)}'
-                    }
+                status = 'running' if running_count == total_count > 0 else 'partially_running'
+                if total_count == 0:
+                    status = 'stopped'
+
+                return {
+                    'status': status,
+                    'containers': containers,
+                    'running': running_count,
+                    'total': total_count
+                }
             else:
                 # 命令执行失败，检查是否是服务未运行
                 if "no such service" in result.stderr.lower() or "no configuration" in result.stderr.lower():
@@ -797,7 +962,6 @@ class ServiceManager:
                 cmd,
                 capture_output=True,
                 text=True,
-                cwd=self.get_service_path(service_name),
                 env=self.get_env_with_docker_host()
             )
 
@@ -837,7 +1001,6 @@ class ServiceManager:
                 cmd,
                 capture_output=True,
                 text=True,
-                cwd=self.get_service_path(service_name),
                 env=self.get_env_with_docker_host()
             )
 
@@ -912,9 +1075,16 @@ class ServiceManager:
             return False, f"创建失败: {str(e)}"
 
     def create_service_from_zip(self, service_name: str, zip_file_path: str) -> Tuple[bool, str]:
-        """从ZIP文件创建服务"""
+        """从压缩包创建服务（支持多种格式）"""
         temp_dir = None
         service_path = None
+
+        # 支持的压缩格式
+        SUPPORTED_FORMATS = [
+            '.zip', '.tar', '.tar.gz', '.tgz',
+            '.tar.bz2', '.tbz', '.tbz2', '.tar.xz', '.txz'
+        ]
+
         try:
             # 验证服务名称
             if not service_name or not re.match(r'^[a-zA-Z0-9_-]+$', service_name):
@@ -925,19 +1095,44 @@ class ServiceManager:
             if existing:
                 return False, f"服务 {service_name} 已存在"
 
-            # 创建临时目录解压文件
-            temp_dir = tempfile.mkdtemp()
+            # 检查文件是否存在
+            archive_path = Path(zip_file_path)
+            if not archive_path.exists():
+                return False, f"压缩包文件不存在: {zip_file_path}"
 
-            # 解压ZIP文件
-            with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
-                zip_ref.extractall(temp_dir)
+            # 获取文件扩展名并检查是否支持
+            file_ext = None
+            for ext in SUPPORTED_FORMATS:
+                if str(archive_path).lower().endswith(ext):
+                    file_ext = ext
+                    break
+
+            if not file_ext:
+                # 如果没有找到匹配的扩展名，尝试通过文件头检测
+                file_ext = self._detect_archive_format(zip_file_path)
+                if not file_ext:
+                    supported_list = ', '.join(SUPPORTED_FORMATS)
+                    return False, f"不支持的压缩格式。支持的格式: {supported_list}"
+
+            # 创建临时目录解压文件
+            temp_dir = tempfile.mkdtemp(prefix=f"docker_service_{service_name}_")
+            logger.info(f"解压文件到临时目录: {temp_dir}, 格式: {file_ext}")
+
+            # 解压文件
+            success, extract_msg = self._extract_archive(zip_file_path, temp_dir, file_ext)
+
+            if not success:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                return False, f"解压失败: {extract_msg}"
 
             # 查找docker-compose.yaml文件
-            yaml_files = list(Path(temp_dir).rglob('docker-compose.yaml'))
-            yaml_files.extend(list(Path(temp_dir).rglob('docker-compose.yml')))
+            yaml_files = []
+            for pattern in ['docker-compose.yaml', 'docker-compose.yml', 'compose.yaml', 'compose.yml']:
+                yaml_files.extend(list(Path(temp_dir).rglob(pattern)))
+
             if not yaml_files:
                 shutil.rmtree(temp_dir, ignore_errors=True)
-                return False, "未找到docker-compose.yaml、docker-compose.yml文件"
+                return False, "未找到docker-compose配置文件"
 
             # 使用第一个找到的YAML文件
             source_yaml = yaml_files[0]
@@ -953,6 +1148,7 @@ class ServiceManager:
             service_path.mkdir(parents=True, exist_ok=False)
 
             # 复制所有文件到服务目录
+            logger.info(f"复制文件到服务目录: {service_path}")
             for item in Path(temp_dir).iterdir():
                 dest = service_path / item.name
                 if item.is_dir():
@@ -963,12 +1159,11 @@ class ServiceManager:
             # 确保docker-compose.yaml文件存在（如果原文件名不是docker-compose.yaml）
             target_yaml = service_path / 'docker-compose.yaml'
             if not target_yaml.exists():
-                # 如果源文件是docker-compose.yaml/compose.yaml等，重命名为docker-compose.yaml
+                # 如果源文件是其他名称，重命名为docker-compose.yaml
                 if source_yaml.name in ['docker-compose.yml', 'compose.yaml', 'compose.yml']:
                     shutil.copy2(source_yaml, target_yaml)
-                else:
-                    # 否则保持原文件名
-                    shutil.copy2(source_yaml, target_yaml)
+                    # 删除原文件
+                    (service_path / source_yaml.name).unlink(missing_ok=True)
 
             # 清理临时目录
             shutil.rmtree(temp_dir, ignore_errors=True)
@@ -986,8 +1181,8 @@ class ServiceManager:
                 (service_name, str(service_path))
             )
 
-            logger.info(f"服务 {service_name} 从ZIP创建成功")
-            return True, "服务创建成功"
+            logger.info(f"服务 {service_name} 从压缩包创建成功，格式: {file_ext}")
+            return True, f"服务创建成功 (格式: {file_ext})"
 
         except zipfile.BadZipFile:
             if temp_dir:
@@ -995,6 +1190,12 @@ class ServiceManager:
             if service_path and service_path.exists():
                 shutil.rmtree(service_path, ignore_errors=True)
             return False, "无效的ZIP文件"
+        except tarfile.ReadError as e:
+            if temp_dir:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            if service_path and service_path.exists():
+                shutil.rmtree(service_path, ignore_errors=True)
+            return False, f"压缩文件读取失败: {str(e)}"
         except yaml.YAMLError as e:
             if temp_dir:
                 shutil.rmtree(temp_dir, ignore_errors=True)
@@ -1002,13 +1203,97 @@ class ServiceManager:
                 shutil.rmtree(service_path, ignore_errors=True)
             return False, f"YAML格式错误: {e}"
         except Exception as e:
-            logger.error(f"从ZIP创建服务失败: {e}")
+            logger.error(f"从压缩包创建服务失败: {e}")
             # 清理
             if temp_dir:
                 shutil.rmtree(temp_dir, ignore_errors=True)
             if service_path and service_path.exists():
                 shutil.rmtree(service_path, ignore_errors=True)
             return False, f"创建失败: {str(e)}"
+
+    def _extract_archive(self, archive_path: str, extract_dir: str, file_ext: str) -> Tuple[bool, str]:
+        """解压压缩文件"""
+        try:
+            if file_ext in ['.zip']:
+                # 解压ZIP文件
+                with zipfile.ZipFile(archive_path, 'r') as zip_ref:
+                    zip_ref.extractall(extract_dir)
+                return True, "ZIP解压成功"
+
+            elif file_ext in ['.tar']:
+                # 解压TAR文件
+                with tarfile.open(archive_path, 'r') as tar_ref:
+                    tar_ref.extractall(extract_dir)
+                return True, "TAR解压成功"
+
+            elif file_ext in ['.tar.gz', '.tgz']:
+                # 解压TAR.GZ文件
+                with tarfile.open(archive_path, 'r:gz') as tar_ref:
+                    tar_ref.extractall(extract_dir)
+                return True, "TAR.GZ解压成功"
+
+            elif file_ext in ['.tar.bz2', '.tbz', '.tbz2']:
+                # 解压TAR.BZ2文件
+                with tarfile.open(archive_path, 'r:bz2') as tar_ref:
+                    tar_ref.extractall(extract_dir)
+                return True, "TAR.BZ2解压成功"
+
+            elif file_ext in ['.tar.xz', '.txz']:
+                # 解压TAR.XZ文件
+                with tarfile.open(archive_path, 'r:xz') as tar_ref:
+                    tar_ref.extractall(extract_dir)
+                return True, "TAR.XZ解压成功"
+
+            else:
+                return False, f"不支持的压缩格式: {file_ext}"
+
+        except Exception as e:
+            return False, f"解压失败: {str(e)}"
+
+    def _detect_archive_format(self, file_path: str) -> str:
+        """通过文件头检测压缩格式"""
+        try:
+            with open(file_path, 'rb') as f:
+                header = f.read(261)  # 读取足够多的字节来识别各种格式
+
+            # ZIP文件头
+            if header.startswith(b'PK\x03\x04'):
+                return '.zip'
+
+            # TAR文件头
+            if header[257:262] == b'ustar':
+                return '.tar'
+
+            # GZIP文件头
+            if header[:2] == b'\x1f\x8b':
+                # 检查是否是tar.gz
+                try:
+                    with tarfile.open(file_path, 'r:gz') as tf:
+                        return '.tar.gz'
+                except:
+                    return '.gz'
+
+            # BZIP2文件头
+            if header[:3] == b'BZh':
+                # 检查是否是tar.bz2
+                try:
+                    with tarfile.open(file_path, 'r:bz2') as tf:
+                        return '.tar.bz2'
+                except:
+                    return '.bz2'
+
+            # XZ文件头
+            if header[:6] == b'\xfd7zXZ\x00':
+                # 检查是否是tar.xz
+                try:
+                    with tarfile.open(file_path, 'r:xz') as tf:
+                        return '.tar.xz'
+                except:
+                    return '.xz'
+
+            return ''
+        except Exception:
+            return ''
 
     def delete_service(self, service_name: str, force: bool = False) -> Tuple[bool, str]:
         """删除服务"""
@@ -1086,7 +1371,6 @@ class ServiceManager:
                 cmd,
                 capture_output=True,
                 text=True,
-                cwd=self.get_service_path(service_name),
                 env=self.get_env_with_docker_host()
             )
 
@@ -1994,7 +2278,7 @@ def create_service_from_yaml():
 
 @app.route('/api/services/zip', methods=['POST'])
 def create_service_from_zip():
-    """从ZIP文件创建服务"""
+    """从压缩包创建服务（支持多种格式）"""
     if not authenticate_request():
         return jsonify({'error': '认证失败'}), 401
 
@@ -2008,22 +2292,35 @@ def create_service_from_zip():
         if not service_name:
             return jsonify({'error': '服务名称不能为空'}), 400
 
+        if not file.filename:
+            return jsonify({'error': '文件名不能为空'}), 400
+
         # 保存临时文件
         temp_dir = tempfile.mkdtemp()
-        zip_path = Path(temp_dir) / f'{service_name}.zip'
-        file.save(zip_path)
 
-        success, message = service_manager.create_service_from_zip(service_name, str(zip_path))
+        # 生成唯一的文件名
+        file_ext = Path(file.filename).suffix
+        temp_file_name = f"{service_name}_{uuid.uuid4().hex[:8]}{file_ext}"
+        archive_path = Path(temp_dir) / temp_file_name
+
+        file.save(str(archive_path))
+
+        # 调用方法来处理压缩包（支持多种格式）
+        success, message = service_manager.create_service_from_zip(service_name, str(archive_path))
 
         # 清理临时文件
         shutil.rmtree(temp_dir, ignore_errors=True)
 
         if success:
-            return jsonify({'message': message}), 201
+            return jsonify({
+                'message': message,
+                'service': service_name,
+                'file_type': file_ext
+            }), 201
         else:
             return jsonify({'error': message}), 400
     except Exception as e:
-        logger.error(f"从ZIP创建服务失败: {e}")
+        logger.error(f"从压缩包创建服务失败: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/services/<service_name>/start', methods=['POST'])
@@ -2345,10 +2642,10 @@ def validate_services_state():
                 # 判断容器是否健康
                 is_healthy = False
                 if container_state == 'running':
-                    if container_health in ['healthy', 'starting', None]:
+                    if container_health in ['healthy', 'starting',  None] or len(container_health) == 0:
                         # 如果没有健康检查配置，running状态就认为是健康的
                         # 如果有健康检查，必须是healthy状态
-                        if container_health == 'healthy' or container_health is None:
+                        if container_health == 'healthy' or container_health is None or len(container_health) == 0:
                             is_healthy = True
                             healthy_containers += 1
                         else:
@@ -2701,6 +2998,110 @@ def upgrade_server():
         logger.error(f"升级服务器失败: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/services/<service_name>/files', methods=['GET'])
+def get_service_directory_structure(service_name):
+    """获取服务文件夹结构"""
+    if not authenticate_request():
+        return jsonify({'error': '认证失败'}), 401
+
+    try:
+        result = service_manager.get_service_directory_structure(service_name)
+
+        if 'error' in result:
+            return jsonify(result), 404 if '不存在' in result['error'] else 500
+
+        return jsonify(result), 200
+    except Exception as e:
+        logger.error(f"获取服务文件夹结构失败: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/services/<service_name>/files/download', methods=['GET'])
+def download_service_file(service_name):
+    """下载服务文件"""
+    if not authenticate_request():
+        return jsonify({'error': '认证失败'}), 401
+
+    try:
+        file_path = request.args.get('path')
+        if not file_path:
+            return jsonify({'error': '文件路径不能为空'}), 400
+
+        success, message, content = service_manager.get_service_file(service_name, file_path)
+
+        if not success:
+            return jsonify({'error': message}), 404
+
+        # 创建临时文件用于下载
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=Path(file_path).suffix)
+        temp_file.write(content)
+        temp_file.close()
+
+        # 获取文件名
+        filename = Path(file_path).name
+
+        logger.info(f"下载服务文件: {service_name}/{file_path}")
+
+        return send_file(
+            temp_file.name,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='application/octet-stream'
+        )
+    except Exception as e:
+        logger.error(f"下载服务文件失败: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/services/<service_name>/files/update', methods=['PUT'])
+def update_service_file(service_name):
+    """更新服务文件（在线编辑）"""
+    if not authenticate_request():
+        return jsonify({'error': '认证失败'}), 401
+
+    try:
+        # 获取文件路径和内容
+        file_path = request.form.get('path')
+        file_content = request.files.get('file')
+
+        if not file_path:
+            return jsonify({'error': '文件路径不能为空'}), 400
+
+        if not file_content:
+            return jsonify({'error': '文件内容不能为空'}), 400
+
+        # 读取文件内容
+        content = file_content.read()
+
+        # 如果是文本文件，也支持直接传文本内容
+        text_content = request.form.get('content')
+        if not content and text_content:
+            content = text_content.encode('utf-8')
+
+        if not content:
+            return jsonify({'error': '文件内容不能为空'}), 400
+
+        # 更新文件
+        success, message = service_manager.update_service_file(service_name, file_path, content)
+
+        if success:
+            # 如果是docker-compose文件，重新加载服务配置
+            if Path(file_path).name in ['docker-compose.yaml', 'docker-compose.yml', 'compose.yaml', 'compose.yml']:
+                logger.info(f"检测到docker-compose文件更新，重新加载服务配置: {service_name}")
+                # 可以在这里添加服务重启逻辑（如果需要）
+                # 例如：自动重启服务
+                # service_manager.restart_service(service_name)
+
+            return jsonify({
+                'message': message,
+                'service': service_name,
+                'file': file_path,
+                'size': len(content)
+            }), 200
+        else:
+            return jsonify({'error': message}), 400
+    except Exception as e:
+        logger.error(f"更新服务文件失败: {e}")
+        return jsonify({'error': str(e)}), 500
+
 # ===================== 辅助函数 =====================
 
 def authenticate_request():
@@ -2785,6 +3186,35 @@ def main():
                 logger.error(f"Docker客户端初始化失败超过 {max_retries} 次，进程退出")
                 sys.exit(255)
 
+    # 读取 sothothv2_agent.ini 配置文件获取 UUID
+    uuid_value = None
+    try:
+        ini_file_path = Path(config['root_dir']) / "config" / "sothothv2_agent.ini"
+        logger.info(f"尝试读取配置文件: {ini_file_path}")
+
+        if ini_file_path.exists():
+            config_parser = configparser.ConfigParser()
+            config_parser.read(ini_file_path, encoding='utf-8')
+
+            # 尝试从DEFAULT section获取配置
+            if 'DEFAULT' in config_parser:
+                uuid_value = config_parser['DEFAULT'].get('uuid')
+                if not uuid_value:
+                    # 尝试直接获取（不使用section）
+                    uuid_value = config_parser.get('DEFAULT', 'uuid', fallback=None)
+            else:
+                # 如果没有DEFAULT section，尝试直接读取
+                uuid_value = config_parser.get('DEFAULT', 'uuid', fallback=None)
+
+            if uuid_value:
+                logger.info(f"成功读取UUID: {uuid_value}")
+            else:
+                logger.warning("配置文件中未找到UUID字段")
+        else:
+            logger.warning(f"配置文件不存在: {ini_file_path}")
+    except Exception as e:
+        logger.error(f"读取sothothv2_agent.ini配置文件失败: {e}")
+
     # 启动服务器
     server = WebServer(args.config, docker_client)
     service_manager = server.service_manager
@@ -2794,10 +3224,23 @@ def main():
     # 创建示例静态文件（如果目录为空）
     static_dir = Path(config.get('static_dir', './static'))
     index_file = static_dir / config.get('static_index_file', 'index.html')
+
     # 启动服务器
     get_sothoth_ip_address()
-    nacos_thread = threading.Thread(target=start_nacos,args=[config['nacos_server_url'],config['workspace_id']])
+
+    # 启动Nacos监控线程，传入UUID
+    nacos_server_url = config.get('nacos_server_url')
+    workspace_id = config.get('workspace_id')
+
+    if uuid_value:
+        logger.info(f"启动Nacos监控线程，参数: nacos_server_url={nacos_server_url}, workspace_id={workspace_id}, uuid={uuid_value}")
+        nacos_thread = threading.Thread(target=start_nacos, args=[nacos_server_url, workspace_id, uuid_value])
+    else:
+        logger.info(f"启动Nacos监控线程，参数: nacos_server_url={nacos_server_url}, workspace_id={workspace_id}")
+        nacos_thread = threading.Thread(target=start_nacos, args=[nacos_server_url, workspace_id, 'unknown_id'])
+
     nacos_thread.start()
+
     server.run()
 
 if __name__ == '__main__':
