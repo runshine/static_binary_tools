@@ -1,12 +1,6 @@
 import dns.resolver
 import socket
 
-g_nacos_server_ip = None
-g_nacos_server_port = None
-g_nacos_heartbeat_time = None
-g_workspace_id = None
-g_node_uuid = None
-
 def set_process_dns(nameservers):
     """
     设置当前进程使用的DNS解析器

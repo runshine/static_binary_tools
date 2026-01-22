@@ -161,27 +161,36 @@ def global_cleanup():
         g_lock_file.close()
 
 
+local_variable_map = {}
+
+def get_config(key):
+    global local_variable_map
+    if key in local_variable_map.keys():
+        return local_variable_map[key]
+    return None
+
+def set_config(key,value):
+    local_variable_map[key] = value
+
+
 def setup_nacos_server(server_ip = None,server_port = None,heartbeat_time = 5,workspace_id = "default",node_uuid = None):
-    global g_nacos_server_ip,g_nacos_server_port,g_nacos_heartbeat_time,g_workspace_id,g_node_uuid
     if server_port is None or server_port is None:
         ip_address = get_sothoth_ip_address()
-        g_nacos_server_ip = re.findall(r"^(\d+\.\d+\.)\d+\.\d+",ip_address)[0] + "0.2"
-        g_nacos_server_port = "8848"
-        g_nacos_heartbeat_time = heartbeat_time
-        g_workspace_id = workspace_id
-        g_node_uuid = node_uuid
+        set_config('nacos_server_ip',re.findall(r"^(\d+\.\d+\.)\d+\.\d+",ip_address)[0] + "0.2")
+        set_config('nacos_server_port','8848')
+
     else:
-        g_nacos_server_ip = server_ip
-        g_nacos_server_port = server_port
-        g_nacos_heartbeat_time = heartbeat_time
-        g_workspace_id = workspace_id
-        g_node_uuid = node_uuid
-    logging.getLogger().info("start setup nacos server, server is: {}:{}, workspace:{}, uuid: {}, heartbeat_time{}".format(g_nacos_server_ip,g_nacos_server_port,g_workspace_id,g_node_uuid,g_nacos_heartbeat_time))
+        set_config('nacos_server_ip',server_ip)
+        set_config('nacos_server_port',server_port)
+
+    set_config('nacos_heartbeat_time',heartbeat_time)
+    set_config('workspace_id',workspace_id)
+    set_config('node_uuid',node_uuid)
+    logging.getLogger().info("start setup nacos server, server is: {}:{}, workspace: {}, uuid: {}, heartbeat_time{}".format(get_config('nacos_server_ip'),get_config('nacos_server_port'),get_config('workspace_id'),get_config('node_uuid'),get_config('nacos_heartbeat_time')))
 
 
 def nacos_service_register(service_name,service_ip,service_port,metadata = None):
-    global g_nacos_server_ip,g_nacos_server_port
-    url = f"http://{g_nacos_server_ip}:{g_nacos_server_port}/nacos/v3/client/ns/instance"
+    url = f"http://{get_config('nacos_server_ip')}:{get_config('nacos_server_port')}/nacos/v3/client/ns/instance"
     if metadata is None:
         metadata = {}
     params = {"serviceName":service_name,
@@ -208,8 +217,7 @@ def nacos_service_register(service_name,service_ip,service_port,metadata = None)
 
 
 def nacos_query_service(service_name):
-    global g_nacos_server_ip,g_nacos_server_port
-    url = f"http://{g_nacos_server_ip}:{g_nacos_server_port}/nacos/v3/client/ns/instance/list?serviceName={service_name}&pageNo=1&pageSize=100"
+    url = f"http://{get_config('nacos_server_ip')}:{get_config('nacos_server_port')}/nacos/v3/client/ns/instance/list?serviceName={service_name}&pageNo=1&pageSize=100"
     try:
         res = requests.get(url)
         if res.status_code != 200:
@@ -222,8 +230,7 @@ def nacos_query_service(service_name):
 
 #服务检测（每5秒心跳一次）
 def nacos_service_beat(service_name,service_ip,service_port):
-    global g_nacos_server_ip,g_nacos_server_port
-    url = f"http://{g_nacos_server_ip}:{g_nacos_server_port}/nacos/v1/ns/instance/beat?serviceName={service_name}&ip={service_ip}&port={service_port}"
+    url = f"http://{get_config('nacos_server_ip')}:{get_config('nacos_server_port')}/nacos/v1/ns/instance/beat?serviceName={service_name}&ip={service_ip}&port={service_port}"
     try:
         res = requests.put(url)
         #logging.getLogger().info(f"已注册服务，执行心跳服务，续期服务响应状态： {res.status_code}, {service_name}-->{service_ip}:{service_port}")
@@ -272,7 +279,7 @@ def start_nacos_service(service_name,port,metadata = None, health_check_fun=None
     metadata['service_port'] = port
     metadata['hostname'] = socket.gethostname()
     ip_address = get_sothoth_ip_address()
-    service_name = "{}-{}-{}".format(g_workspace_id,socket.gethostname(),ip_address)
+    service_name = "{}-{}-{}".format(get_config('workspace_id'),socket.gethostname(),ip_address)
     while register_retry > 0 and not nacos_service_register(service_name,ip_address,port,metadata):
         register_retry = register_retry -1
         logging.getLogger().warning(f"Failed register to nacos server, retry: {register_retry}")
@@ -283,8 +290,8 @@ def start_nacos_service(service_name,port,metadata = None, health_check_fun=None
     last_health_check_ret = True
     while True:
         ip_address = get_sothoth_ip_address()
-        service_name = "{}-{}-{}".format(g_workspace_id,socket.gethostname(),ip_address)
-        time.sleep(g_nacos_heartbeat_time)
+        service_name = "{}-{}-{}".format(get_config('workspace_id'),socket.gethostname(),ip_address)
+        time.sleep(get_config('nacos_heartbeat_time'))
         if health_check_fun is not None:
             health_check_ret = health_check_fun(*args)
         else:

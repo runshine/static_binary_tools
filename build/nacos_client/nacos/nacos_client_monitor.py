@@ -1,11 +1,11 @@
 import threading
+
 from common_utils import *
 from urllib.parse import urlparse
 
 
 def start_nacos_client_service():
-    global g_node_uuid
-    start_nacos_service("nacos-client","11197",{'uuid': g_node_uuid, 'ip': get_sothoth_ip_address()},check_tcp_port_is_listen,11197)
+    start_nacos_service("nacos-client","11197",{'uuid': get_config('node_uuid'), 'ip': get_sothoth_ip_address()},check_tcp_port_is_listen,11197)
 
 def start_ttyd_service():
     start_nacos_service("ttyd","11198",translate_ipv4_list_to_map(get_ipv4_addresses()),check_tcp_port_is_listen,11198)

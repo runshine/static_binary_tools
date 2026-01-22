@@ -1,5 +1,5 @@
 {
-  "port": 8080,
+  "port": 11197,
   "host": "0.0.0.0",
   "api_prefix": "/api",
   "token": "your_secure_token_here",
@@ -12,7 +12,7 @@
   "docker_socket": "unix:///sothothv2/var/run/docker.sock",
   "max_upload_size": 104857600,
   "database_file": "./docker_manager.db",
-  "nacos_server_url": "http://192.168.12.90:8848",
-  "root_dir": "/tmp/",
+  "nacos_server_url": "http://nacos.sothothv2-ns.svc.cluster.local:8848",
+  "root_dir": "/sothothv2/",
   "workspace_id": "workspace-key-111111"
 }
