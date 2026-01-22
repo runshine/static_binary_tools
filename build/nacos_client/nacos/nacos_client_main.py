@@ -3146,6 +3146,31 @@ def restart_server():
     logger.info("重启服务器...")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+def extract_uuid_from_config(file_path):
+    """
+    从配置文件中提取UUID值
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        # 使用正则表达式匹配uuid行
+        pattern = r'uuid\s*=\s*([a-fA-F0-9-]+)'
+        match = re.search(pattern, content)
+
+        if match:
+            return match.group(1)
+        else:
+            print("未找到UUID值")
+            return None
+
+    except FileNotFoundError:
+        print(f"文件未找到: {file_path}")
+        return None
+    except Exception as e:
+        print(f"读取文件时出错: {e}")
+        return None
+
 # ===================== 全局实例 =====================
 service_manager = None
 system_info_collector = None
@@ -3193,23 +3218,7 @@ def main():
         logger.info(f"尝试读取配置文件: {ini_file_path}")
 
         if ini_file_path.exists():
-            config_parser = configparser.ConfigParser()
-            config_parser.read(ini_file_path, encoding='utf-8')
-
-            # 尝试从DEFAULT section获取配置
-            if 'DEFAULT' in config_parser:
-                uuid_value = config_parser['DEFAULT'].get('uuid')
-                if not uuid_value:
-                    # 尝试直接获取（不使用section）
-                    uuid_value = config_parser.get('DEFAULT', 'uuid', fallback=None)
-            else:
-                # 如果没有DEFAULT section，尝试直接读取
-                uuid_value = config_parser.get('DEFAULT', 'uuid', fallback=None)
-
-            if uuid_value:
-                logger.info(f"成功读取UUID: {uuid_value}")
-            else:
-                logger.warning("配置文件中未找到UUID字段")
+            uuid_value = extract_uuid_from_config(str(ini_file_path))
         else:
             logger.warning(f"配置文件不存在: {ini_file_path}")
     except Exception as e:
