@@ -161,12 +161,6 @@ def global_cleanup():
         g_lock_file.close()
 
 
-g_nacos_server_ip = None
-g_nacos_server_port = None
-g_nacos_heartbeat_time = None
-g_workspace_id = None
-g_node_uuid = None
-
 def setup_nacos_server(server_ip = None,server_port = None,heartbeat_time = 5,workspace_id = "default",node_uuid = None):
     global g_nacos_server_ip,g_nacos_server_port,g_nacos_heartbeat_time,g_workspace_id,g_node_uuid
     if server_port is None or server_port is None:
@@ -182,7 +176,7 @@ def setup_nacos_server(server_ip = None,server_port = None,heartbeat_time = 5,wo
         g_nacos_heartbeat_time = heartbeat_time
         g_workspace_id = workspace_id
         g_node_uuid = node_uuid
-    logging.getLogger().info("start setup nacos server, server is: {}:{}".format(g_nacos_server_ip,g_nacos_server_port))
+    logging.getLogger().info("start setup nacos server, server is: {}:{}, workspace:{}, uuid: {}, heartbeat_time{}".format(g_nacos_server_ip,g_nacos_server_port,g_workspace_id,g_node_uuid,g_nacos_heartbeat_time))
 
 
 def nacos_service_register(service_name,service_ip,service_port,metadata = None):
