@@ -36,6 +36,7 @@ def set_process_dns(nameservers):
             pass
 
         # 如果自定义解析失败，回退到系统默认
+        print(f"failed do custom getaddrinfo, try original: {host}")
         return original_getaddrinfo(host, port, family, type, proto, flags)
 
     socket.getaddrinfo = custom_getaddrinfo
