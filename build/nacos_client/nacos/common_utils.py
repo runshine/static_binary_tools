@@ -168,7 +168,7 @@ g_workspace_id = None
 g_node_uuid = None
 
 def setup_nacos_server(server_ip = None,server_port = None,heartbeat_time = 5,workspace_id = "default",node_uuid = None):
-    global g_nacos_server_ip,g_nacos_server_port,g_nacos_heartbeat_time,g_workspace_id
+    global g_nacos_server_ip,g_nacos_server_port,g_nacos_heartbeat_time,g_workspace_id,g_node_uuid
     if server_port is None or server_port is None:
         ip_address = get_sothoth_ip_address()
         g_nacos_server_ip = re.findall(r"^(\d+\.\d+\.)\d+\.\d+",ip_address)[0] + "0.2"
