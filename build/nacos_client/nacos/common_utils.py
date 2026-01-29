@@ -233,7 +233,7 @@ def nacos_service_beat(service_name,service_ip,service_port):
     url = f"http://{get_config('nacos_server_ip')}:{get_config('nacos_server_port')}/nacos/v1/ns/instance/beat?serviceName={service_name}&ip={service_ip}&port={service_port}"
     try:
         res = requests.put(url)
-        #logging.getLogger().info(f"已注册服务，执行心跳服务，续期服务响应状态： {res.status_code}, {service_name}-->{service_ip}:{service_port}")
+        logging.getLogger().info(f"已注册服务，执行心跳服务，续期服务响应状态： {res.status_code}, {service_name}-->{service_ip}:{service_port}")
         if res.status_code != 200:
             logging.getLogger().warning(f"已注册服务，执行心跳服务, response not ok: {res.json()}")
             return False
