@@ -948,6 +948,20 @@ class ServiceManager:
             # 获取项目名称
             project_name = service_name
 
+            # 执行docker-compose pull
+            cmd = [
+                self.docker_compose_bin,
+                '-f', str(compose_file),
+                '-p', project_name,
+                'pull'
+            ]
+            subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                env=self.get_env_with_docker_host()
+            )
+
             # 执行docker-compose up -d
             cmd = [
                 self.docker_compose_bin,
