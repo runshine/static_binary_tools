@@ -16,8 +16,8 @@ def set_process_dns(nameservers):
     def custom_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
         if host == '0.0.0.0':
             original_getaddrinfo(host, port, family, type, proto, flags)
-        if host == 'nacos.sothothv2-ns.svc.cluster.local':
-            print(f"start custom_getaddrinfo: {host}")
+        # if host == 'nacos.sothothv2-ns.svc.cluster.local':
+        #     print(f"start custom_getaddrinfo: {host}")
         try:
             # 尝试使用自定义DNS解析
             answers = resolver.resolve(host, 'A')

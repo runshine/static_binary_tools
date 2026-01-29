@@ -3201,7 +3201,7 @@ def main():
 
     args = parser.parse_args()
     config = ConfigManager.load_config(args.config)
-    logger = setup_logger(os.path.join(config['root_dir'],"var/log/nacos_client.log"))
+    logger = setup_logger(os.path.join(config['log_dir'],"nacos_client.log"))
 
     # 初始化Docker客户端，带重试逻辑
     max_retries = 10

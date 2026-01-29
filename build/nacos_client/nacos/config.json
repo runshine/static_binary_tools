@@ -4,15 +4,15 @@
   "api_prefix": "/api",
   "token": "your_secure_token_here",
   "daemon": false,
-  "log_dir": "./logs",
+  "log_dir": "/tmp/nacos_client",
   "log_level": "INFO",
-  "compose_root": "./services",
+  "compose_root": "/sothothv2/usr/nacos/services",
   "docker_compose_bin": "/sothothv2/usr/bin/docker-compose",
   "docker_bin": "/sothothv2/usr/bin/docker",
   "docker_socket": "unix:///sothothv2/var/run/docker.sock",
   "max_upload_size": 104857600,
-  "database_file": "./docker_manager.db",
+  "database_file": "nacos_client.db",
   "nacos_server_url": "http://nacos.sothothv2-ns.svc.cluster.local:8848",
-  "root_dir": "/sothothv2/",
-  "workspace_id": "workspace-key-111111"
+  "root_dir": "/sothothv2",
+  "workspace_id": "111111111111111111"
 }
