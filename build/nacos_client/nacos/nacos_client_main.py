@@ -1614,11 +1614,16 @@ class WebServer:
 
         # 启动Flask服务器
         logger.info(f"启动WEB服务器，监听端口 {self.config['port']}")
-        app.run(
-            host=self.config['host'],
-            port=self.config['port'],
-            debug=False
-        )
+        try:
+            app.run(
+                host=self.config['host'],
+                port=self.config['port'],
+                debug=False,
+                reuse_port=True
+            )
+        except Exception as e:
+            logger.error(f"WEB服务器启动失败: {e}")
+            sys.exit(1)
 
 # ===================== 静态文件服务路由 =====================
 
