@@ -1615,11 +1615,19 @@ class WebServer:
         # 启动Flask服务器
         logger.info(f"启动WEB服务器，监听端口 {self.config['port']}")
         try:
+            # 创建带有 reuse_port属性的socket
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind((self.config['host'], self.config['port']))
+            sock.listen(1)
+
+            # 关闭socket，Flask会自己创建
+            sock.close()
+
             app.run(
                 host=self.config['host'],
                 port=self.config['port'],
-                debug=False,
-                reuse_port=True
+                debug=False
             )
         except Exception as e:
             logger.error(f"WEB服务器启动失败: {e}")
