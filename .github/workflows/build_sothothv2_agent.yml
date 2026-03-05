@@ -50,6 +50,7 @@ jobs:
           name: sothothv2_agent-linux-${{ matrix.build_name }}
           path: ${{ github.workspace }}/output/build/install/*
 
+
       - name: Create Release
         uses: ncipollo/release-action@v1
         with:
