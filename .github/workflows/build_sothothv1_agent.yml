@@ -27,7 +27,7 @@ jobs:
           submodules: true
 
       - name: Setup
-        run: apt-get install -y golang gcc-aarch64-linux-gnu
+        run: sudo apt-get install -y golang gcc-aarch64-linux-gnu
 
       - name: Build
         run: cd ${{ github.workspace }}/build/sothothv1_agent/ && bash build.sh
