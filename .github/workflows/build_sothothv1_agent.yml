@@ -33,7 +33,7 @@ jobs:
         run: cd ${{ github.workspace }}/build/sothothv1_agent/ && bash build.sh
 
       - name: Tar
-        run: cd ${{ github.workspace }}/build/gaiasec-server/plugins/nodeagent/ && mkdir -p bin && mv nodeagent-linux-amd64 bin/sothothv1_agent && tar -czvf "./sothothv2_agent-latest-linux-x86_64.tar.gz" ./bin/ && mv nodeagent-linux-arm64 bin/sothothv1_agent && tar -czvf "./sothothv2_agent-latest-linux-aarch64.tar.gz" ./bin/ 
+        run: cd ${{ github.workspace }}/build/gaiasec-server/plugins/nodeagent/ && mkdir -p bin && mv nodeagent-linux-amd64 bin/sothothv1_agent && tar -czvf "./sothothv2_agent-latest-linux-x86_64.tar.gz" ./bin/ && mv nodeagent-linux-arm64 bin/sothothv1_agent && tar -czvf "./sothothv2_agent-latest-linux-aarch64.tar.gz" ./bin/  && rm -rf ./bin/
 
       - name: List Dir
         run: ls -lRt ${{ github.workspace }}/build/gaiasec-server/plugins/nodeagent/
