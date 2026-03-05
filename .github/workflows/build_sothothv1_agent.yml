@@ -27,10 +27,10 @@ jobs:
           submodules: true
 
       - name: List Dir
-        run: ls -lRt ${{ github.workspace }}/static_binary_tools/build/sothothv1_agent
+        run: ls -lRt ${{ github.workspace }}/build/sothothv1_agent
 
       - name: Cp build.sh
-        run: mv ${{ github.workspace }}/static_binary_tools/build/sothothv1_agent/build_v1.sh ${{ github.workspace }}/static_binary_tools/build/sothothv1_agent/build.sh
+        run: mv ${{ github.workspace }}/build/sothothv1_agent/build_v1.sh ${{ github.workspace }}/build/sothothv1_agent/build.sh
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
