@@ -24,7 +24,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with: 
-          submomdules: true
+          submodules: true
 
       - name: List Dir
         run: ls -lRt ${{ github.workspace }}
