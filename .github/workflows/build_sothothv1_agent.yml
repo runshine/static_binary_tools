@@ -41,7 +41,7 @@ jobs:
       - name: Upload binary to artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: sothothv1_agent-linux-${{ matrix.name }}
+          name: sothothv1_agent-linux
           path: ${{ github.workspace }}/build/gaiasec-server/plugins/nodeagent/*
 
       - name: Create Release
