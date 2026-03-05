@@ -26,6 +26,9 @@ jobs:
         with: 
           submomdules: true
 
+      - name: List Dir
+        run: ls -lRt ${{ github.workspace }}
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
