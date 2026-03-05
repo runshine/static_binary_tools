@@ -32,9 +32,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: submodule
-        run: git submodule update --init
-
       - name: Build binary
         uses: docker/build-push-action@v5
         with:
@@ -45,7 +42,6 @@ jobs:
           file: Dockerfile
           outputs: |
             type=local,dest=${{ github.workspace }}/output
-
 
       - name: List Dir
         run: ls -lRt ${{ github.workspace }}
