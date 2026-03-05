@@ -26,28 +26,14 @@ jobs:
         with: 
           submodules: true
 
-      - name: List Dir
-        run: ls -lRt ${{ github.workspace }}/build/sothothv1_agent
+      - name: Setup
+        run: apt-get install -y golang gcc-aarch64-linux-gnu
 
-      - name: Cp build.sh
-        run: mv ${{ github.workspace }}/build/sothothv1_agent/build_v1.sh ${{ github.workspace }}/build/sothothv1_agent/build.sh
+      - name: Build
+        run: cd ${{ github.workspace }}/build/sothothv1_agent/ && bash build.sh
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build binary
-        uses: docker/build-push-action@v5
-        with:
-          context: build/sothothv1_agent/
-          platforms: ${{ matrix.build_arch }}
-          push: false
-          tags: local_sothothv1_agent:latest
-          file: Dockerfile
-          outputs: |
-            type=local,dest=${{ github.workspace }}/output
+      - name: Tar
+        run: cd ${{ github.workspace }}/build/gaiasec-server/plugins/nodeagent/ && mkdir -p bin && mv nodeagent-linux-amd64 bin/sothothv1_agent && tar -czvf "./sothothv2_agent-latest-linux-x86_64.tar.gz" ./bin/ && mv nodeagent-linux-arm64 bin/sothothv1_agent && tar -czvf "./sothothv2_agent-latest-linux-x86_64.tar.gz" ./bin/ 
 
       - name: List Dir
         run: ls -lRt ${{ github.workspace }}
@@ -56,14 +42,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: sothothv1_agent-linux-${{ matrix.name }}
-          path: ${{ github.workspace }}/output/build/install/*
+          path: ${{ github.workspace }}/build/gaiasec-server/plugins/nodeagent/*
 
       - name: Create Release
         uses: ncipollo/release-action@v1
         with:
           tag: v1.0
           name: "Release v1.0"
-          artifacts: "${{ github.workspace }}/output/build/install/*"
+          artifacts: "${{ github.workspace }}/build/gaiasec-server/plugins/nodeagent/*"
           artifactErrorsFailBuild: false
           allowUpdates: true  # 允许更新已存在的release
           token: ${{ secrets.GITHUB_TOKEN }}
