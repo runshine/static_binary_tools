@@ -38,6 +38,7 @@ jobs:
       - name: List Dir
         run: ls -lRt ${{ github.workspace }}/build/gaiasec-server/plugins/nodeagent/
 
+
       - name: Upload binary to artifacts
         uses: actions/upload-artifact@v4
         with:
