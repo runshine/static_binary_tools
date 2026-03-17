@@ -50,18 +50,42 @@ type ServiceDetail struct {
 	} `json:"config"`
 }
 
-// AgentInfo Agent 信息
+// AgentInfo Agent 综合状态信息
 type AgentInfo struct {
-	Version        string `json:"version"`
-	UUID           string `json:"uuid"`
-	ProjectID      string `json:"project_id"`
-	Workspace      string `json:"workspace"`
-	Server         string `json:"server"`
-	UptimeSeconds  int64  `json:"uptime_seconds"`
-	ServicesTotal  int    `json:"services_total"`
-	ServicesRunning int   `json:"services_running"`
-	GoVersion      string `json:"go_version"`
-	Platform       string `json:"platform"`
+	// 版本信息
+	Version   string `json:"version"`
+	GoVersion string `json:"go_version"`
+	Platform  string `json:"platform"`
+
+	// 基本信息
+	UUID      string `json:"uuid"`
+	ProjectID string `json:"project_id"`
+	Workspace string `json:"workspace"`
+	Server    string `json:"server"`
+
+	// 运行状态
+	UptimeSeconds int64  `json:"uptime_seconds"`
+	StartTime     string `json:"start_time"`
+	Status        string `json:"status"` // running, shutting_down
+
+	// 服务统计
+	ServicesTotal   int `json:"services_total"`
+	ServicesRunning int `json:"services_running"`
+	ServicesStopped int `json:"services_stopped"`
+	ServicesError   int `json:"services_error"` // 有失败计数的服务数量
+
+	// 服务简要状态列表
+	Services []ServiceStatusBrief `json:"services"`
+}
+
+// ServiceStatusBrief 服务简要状态
+type ServiceStatusBrief struct {
+	Name        string `json:"name"`
+	IsRunning   bool   `json:"is_running"`
+	PID         int    `json:"pid"`
+	Uptime      int64  `json:"uptime_seconds"`
+	FailCount   int    `json:"fail_count"`
+	MonitorMode string `json:"monitor_mode"`
 }
 
 // LogResponse 日志响应
@@ -218,36 +242,85 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleAgentInfo 获取 Agent 信息
+// handleAgentInfo 获取 Agent 综合状态信息
 func handleAgentInfo(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		respondError(w, APICodeBadRequest, "Method not allowed")
 		return
 	}
 
+	// 检查是否正在关闭
+	shutdownMutex.RLock()
+	isShuttingDown := isShuttingDown
+	shutdownMutex.RUnlock()
+
+	status := "running"
+	if isShuttingDown {
+		status = "shutting_down"
+	}
+
+	// 收集服务统计信息
 	serviceMutex.RLock()
+	defer serviceMutex.RUnlock()
+
 	totalServices := len(services)
 	runningCount := 0
-	for _, status := range services {
-		status.mutex.RLock()
-		if status.IsRunning {
-			runningCount++
+	stoppedCount := 0
+	errorCount := 0
+	serviceList := make([]ServiceStatusBrief, 0, totalServices)
+
+	for name, svc := range services {
+		svc.mutex.RLock()
+		var uptime int64
+		if !svc.StartTime.IsZero() {
+			uptime = int64(time.Since(svc.StartTime).Seconds())
 		}
-		status.mutex.RUnlock()
+
+		if svc.IsRunning {
+			runningCount++
+		} else {
+			stoppedCount++
+		}
+		if svc.FailCount > 0 {
+			errorCount++
+		}
+
+		serviceList = append(serviceList, ServiceStatusBrief{
+			Name:        name,
+			IsRunning:   svc.IsRunning,
+			PID:         svc.PID,
+			Uptime:      uptime,
+			FailCount:   svc.FailCount,
+			MonitorMode: svc.Service.MonitorMode,
+		})
+		svc.mutex.RUnlock()
 	}
-	serviceMutex.RUnlock()
 
 	respondSuccess(w, AgentInfo{
-		Version:        BuildVersion,
-		UUID:           monitorConfig.UUID,
-		ProjectID:      monitorConfig.ProjectID,
-		Workspace:      monitorConfig.Workspace,
-		Server:         fmt.Sprintf("%s:%s", monitorConfig.ServerAddr, monitorConfig.ServerPort),
-		UptimeSeconds:  int64(time.Since(agentStartTime).Seconds()),
-		ServicesTotal:  totalServices,
+		// 版本信息
+		Version:   BuildVersion,
+		GoVersion: "go1.21",
+		Platform:  "linux/amd64",
+
+		// 基本信息
+		UUID:      monitorConfig.UUID,
+		ProjectID: monitorConfig.ProjectID,
+		Workspace: monitorConfig.Workspace,
+		Server:    fmt.Sprintf("%s:%s", monitorConfig.ServerAddr, monitorConfig.ServerPort),
+
+		// 运行状态
+		UptimeSeconds: int64(time.Since(agentStartTime).Seconds()),
+		StartTime:     agentStartTime.Format(time.RFC3339),
+		Status:        status,
+
+		// 服务统计
+		ServicesTotal:   totalServices,
 		ServicesRunning: runningCount,
-		GoVersion:      "go1.21",
-		Platform:       "linux/amd64",
+		ServicesStopped: stoppedCount,
+		ServicesError:   errorCount,
+
+		// 服务简要状态列表
+		Services: serviceList,
 	})
 }
 

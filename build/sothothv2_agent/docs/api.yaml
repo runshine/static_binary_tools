@@ -50,8 +50,14 @@ paths:
     get:
       tags:
         - Agent
-      summary: 获取 Agent 信息
-      description: 获取 Agent 的详细信息，包括版本、UUID、运行时间等
+      summary: 获取 Agent 综合状态信息
+      description: |
+        获取 Agent 的完整状态信息，包括：
+        - 版本信息（版本号、Go版本、平台）
+        - 基本信息（UUID、项目ID、工作空间、服务器地址）
+        - 运行状态（运行时长、启动时间、当前状态）
+        - 服务统计（总数、运行数、停止数、异常数）
+        - 服务简要状态列表
       responses:
         '200':
           description: 成功
@@ -64,15 +70,32 @@ paths:
                 message: success
                 data:
                   version: "20260317.103000"
+                  go_version: "go1.21"
+                  platform: "linux/amd64"
                   uuid: "550e8400-e29b-41d4-a716-446655440000"
                   project_id: "project-001"
                   workspace: "/opt/monitor"
                   server: "192.168.1.100:8080"
                   uptime_seconds: 86400
+                  start_time: "2026-03-17T10:30:00Z"
+                  status: "running"
                   services_total: 5
-                  services_running: 4
-                  go_version: "go1.21"
-                  platform: "linux/amd64"
+                  services_running: 3
+                  services_stopped: 2
+                  services_error: 1
+                  services:
+                    - name: "my-service"
+                      is_running: true
+                      pid: 12345
+                      uptime_seconds: 3600
+                      fail_count: 0
+                      monitor_mode: "self"
+                    - name: "backup-service"
+                      is_running: false
+                      pid: 0
+                      uptime_seconds: 0
+                      fail_count: 3
+                      monitor_mode: "monitor"
 
   /services:
     get:
@@ -368,12 +391,45 @@ components:
           enum: [self, monitor]
           description: 监控模式
 
+    ServiceStatusBrief:
+      type: object
+      description: 服务简要状态
+      properties:
+        name:
+          type: string
+          description: 服务名称
+        is_running:
+          type: boolean
+          description: 是否正在运行
+        pid:
+          type: integer
+          description: 进程ID
+        uptime_seconds:
+          type: integer
+          description: 运行时长（秒）
+        fail_count:
+          type: integer
+          description: 失败计数
+        monitor_mode:
+          type: string
+          enum: [self, monitor]
+          description: 监控模式
+
     AgentInfo:
       type: object
+      description: Agent 综合状态信息
       properties:
+        # 版本信息
         version:
           type: string
-          description: Agent 版本
+          description: Agent 版本号
+        go_version:
+          type: string
+          description: Go 编译版本
+        platform:
+          type: string
+          description: 运行平台
+        # 基本信息
         uuid:
           type: string
           description: Agent UUID
@@ -386,21 +442,37 @@ components:
         server:
           type: string
           description: 服务器地址
+        # 运行状态
         uptime_seconds:
           type: integer
           description: 运行时长（秒）
+        start_time:
+          type: string
+          format: date-time
+          description: 启动时间
+        status:
+          type: string
+          enum: [running, shutting_down]
+          description: Agent 状态
+        # 服务统计
         services_total:
           type: integer
           description: 服务总数
         services_running:
           type: integer
           description: 运行中的服务数
-        go_version:
-          type: string
-          description: Go 版本
-        platform:
-          type: string
-          description: 平台信息
+        services_stopped:
+          type: integer
+          description: 已停止的服务数
+        services_error:
+          type: integer
+          description: 有异常的服务数（fail_count > 0）
+        # 服务简要状态列表
+        services:
+          type: array
+          items:
+            $ref: '#/components/schemas/ServiceStatusBrief'
+          description: 服务简要状态列表
 
     LogResponse:
       type: object
