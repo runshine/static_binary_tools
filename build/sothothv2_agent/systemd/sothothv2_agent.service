@@ -1,15 +1,13 @@
 [Unit]
-Description=Sthothv2 Monitor Agent Service
+Description=SothothV2 Service
+Documentation=https://example.com/sothothv2-docs
 After=network.target
 
 [Service]
 Type=simple
-User=root
-WorkingDirectory=/opt/monitor
-ExecStart=/usr/local/bin/monitor-agent --config=/etc/monitor.ini
+ExecStart=/sothothv2/bin/sothothv2_agent -config /sothothv2/config/sothothv2_agent.ini -foreground
 Restart=always
 RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
-EOF

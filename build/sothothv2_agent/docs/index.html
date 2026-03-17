@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SothothV2 Agent API Documentation</title>
+    <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5.10.5/swagger-ui.css">
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+        .header {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #fff;
+            padding: 20px;
+            text-align: center;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 24px;
+            font-weight: 600;
+        }
+        .header p {
+            margin: 8px 0 0;
+            opacity: 0.8;
+            font-size: 14px;
+        }
+        .api-token-section {
+            background: #f8f9fa;
+            padding: 15px 20px;
+            border-bottom: 1px solid #e9ecef;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        .api-token-section label {
+            font-weight: 500;
+            color: #333;
+        }
+        .api-token-section input {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            width: 300px;
+        }
+        .api-token-section button {
+            padding: 8px 16px;
+            background: #1a1a2e;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .api-token-section button:hover {
+            background: #16213e;
+        }
+        #swagger-ui {
+            max-width: 1460px;
+            margin: 0 auto;
+        }
+        .swagger-ui .topbar {
+            display: none;
+        }
+        .info {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>SothothV2 Agent API</h1>
+        <p>服务守护进程管理接口文档</p>
+    </div>
+
+    <div class="api-token-section">
+        <label for="api-token">API Token:</label>
+        <input type="text" id="api-token" placeholder="输入 API Token（如果需要认证）">
+        <button onclick="applyToken()">应用 Token</button>
+        <span id="token-status" style="color: #28a745; display: none;">Token 已应用</span>
+    </div>
+
+    <div id="swagger-ui"></div>
+
+    <script src="https://unpkg.com/swagger-ui-dist@5.10.5/swagger-ui-bundle.js"></script>
+    <script src="https://unpkg.com/swagger-ui-dist@5.10.5/swagger-ui-standalone-preset.js"></script>
+    <script>
+        // 从 URL 参数读取 token
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlToken = urlParams.get('token');
+
+        // 初始化 Swagger UI
+        const ui = SwaggerUIBundle({
+            url: "./api.yaml",
+            dom_id: '#swagger-ui',
+            presets: [
+                SwaggerUIBundle.presets.apis,
+                SwaggerUIStandalonePreset
+            ],
+            layout: "BaseLayout",
+            deepLinking: true,
+            showExtensions: true,
+            showCommonExtensions: true,
+            requestInterceptor: function(request) {
+                const token = document.getElementById('api-token').value;
+                if (token) {
+                    request.headers['X-API-Token'] = token;
+                }
+                return request;
+            }
+        });
+
+        // 如果 URL 中有 token，自动填充
+        if (urlToken) {
+            document.getElementById('api-token').value = urlToken;
+            document.getElementById('token-status').style.display = 'inline';
+        }
+
+        // 应用 Token
+        function applyToken() {
+            const token = document.getElementById('api-token').value;
+            const status = document.getElementById('token-status');
+            if (token) {
+                status.textContent = 'Token 已应用';
+                status.style.color = '#28a745';
+            } else {
+                status.textContent = 'Token 已清除';
+                status.style.color = '#dc3545';
+            }
+            status.style.display = 'inline';
+            setTimeout(() => {
+                status.style.display = 'none';
+            }, 2000);
+        }
+    </script>
+</body>
+</html>

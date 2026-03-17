@@ -36,6 +36,10 @@ type MonitorConfig struct {
     Foreground   bool   `ini:"foreground"`
     EnableCgroup bool   `ini:"enable_cgroup"`
     CgroupName   string `ini:"cgroup_name"`
+    // API 配置
+    APIEnabled   bool   `ini:"api_enabled"`
+    APIListen    string `ini:"api_listen"`
+    APIAuthToken string `ini:"api_auth_token"`
 }
 
 // 服务配置结构体
@@ -216,6 +220,9 @@ func main() {
 
     // 启动cron定时任务
     startMonitorCron()
+
+    // 启动 HTTP API 服务器
+    startAPIServer()
 
     // 启动所有服务
     startAllServices()

@@ -1,0 +1,425 @@
+openapi: 3.0.3
+info:
+  title: SothothV2 Agent API
+  description: |
+    SothothV2 Agent 服务守护进程管理接口。
+
+    提供服务状态查询、服务控制（启动/停止/重启）、日志查看等功能。
+  version: 1.0.0
+  contact:
+    name: API Support
+
+servers:
+  - url: http://localhost:11188/api/v1
+    description: 本地服务器
+
+tags:
+  - name: Agent
+    description: Agent 信息和健康检查
+  - name: Services
+    description: 服务管理和状态查询
+
+security:
+  - ApiToken: []
+
+paths:
+  /agent/health:
+    get:
+      tags:
+        - Agent
+      summary: 健康检查
+      description: 检查 Agent 服务是否正常运行
+      security: []
+      responses:
+        '200':
+          description: 服务健康
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+                  timestamp:
+                    type: string
+                    format: date-time
+                    example: "2026-03-17T10:30:00Z"
+
+  /agent/info:
+    get:
+      tags:
+        - Agent
+      summary: 获取 Agent 信息
+      description: 获取 Agent 的详细信息，包括版本、UUID、运行时间等
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              example:
+                code: 0
+                message: success
+                data:
+                  version: "20260317.103000"
+                  uuid: "550e8400-e29b-41d4-a716-446655440000"
+                  project_id: "project-001"
+                  workspace: "/opt/monitor"
+                  server: "192.168.1.100:8080"
+                  uptime_seconds: 86400
+                  services_total: 5
+                  services_running: 4
+                  go_version: "go1.21"
+                  platform: "linux/amd64"
+
+  /services:
+    get:
+      tags:
+        - Services
+      summary: 获取所有服务列表
+      description: 获取所有被管理服务的状态列表
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              example:
+                code: 0
+                message: success
+                data:
+                  services:
+                    - name: "my-service"
+                      description: "主应用服务"
+                      is_running: true
+                      pid: 12345
+                      start_time: "2026-03-17T10:30:00Z"
+                      uptime_seconds: 3600
+                      fail_count: 0
+                      last_check: "2026-03-17T11:30:00Z"
+                      monitor_mode: "self"
+                  total: 1
+                  running_count: 1
+
+  /services/{name}:
+    get:
+      tags:
+        - Services
+      summary: 获取单个服务详情
+      description: 获取指定服务的详细状态和配置信息
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: 服务名称
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              example:
+                code: 0
+                message: success
+                data:
+                  name: "my-service"
+                  description: "主应用服务"
+                  is_running: true
+                  pid: 12345
+                  start_time: "2026-03-17T10:30:00Z"
+                  uptime_seconds: 3600
+                  fail_count: 0
+                  last_check: "2026-03-17T11:30:00Z"
+                  monitor_mode: "self"
+                  config:
+                    work_dir: "/opt/my-service"
+                    stdout_log: "/var/log/my-service/stdout.log"
+                    stderr_log: "/var/log/my-service/stderr.log"
+                    check_interval: 10
+                    max_failures: 6
+                    depends_on: ["redis-service"]
+                    start_cmd: "./start.sh"
+                    stop_cmd: "./stop.sh"
+                    restart_cmd: "./restart.sh"
+        '1001':
+          description: 服务不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              example:
+                code: 1001
+                message: "Service not found: unknown-service"
+
+  /services/{name}/start:
+    post:
+      tags:
+        - Services
+      summary: 启动服务
+      description: 启动指定的服务
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: 服务名称
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 启动指令已发送
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              example:
+                code: 0
+                message: success
+                data:
+                  name: "my-service"
+                  action: "start"
+                  status: "initiated"
+        '1002':
+          description: 服务已在运行
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              example:
+                code: 1002
+                message: "Service already running"
+
+  /services/{name}/stop:
+    post:
+      tags:
+        - Services
+      summary: 停止服务
+      description: 停止指定的服务
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: 服务名称
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 停止指令已发送
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              example:
+                code: 0
+                message: success
+                data:
+                  name: "my-service"
+                  action: "stop"
+                  status: "initiated"
+        '1003':
+          description: 服务未运行
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              example:
+                code: 1003
+                message: "Service not running"
+
+  /services/{name}/restart:
+    post:
+      tags:
+        - Services
+      summary: 重启服务
+      description: 重启指定的服务
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: 服务名称
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 重启指令已发送
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              example:
+                code: 0
+                message: success
+                data:
+                  name: "my-service"
+                  action: "restart"
+                  status: "initiated"
+
+  /services/{name}/logs:
+    get:
+      tags:
+        - Services
+      summary: 获取服务日志
+      description: 获取指定服务的日志内容
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: 服务名称
+          schema:
+            type: string
+        - name: type
+          in: query
+          required: false
+          description: 日志类型
+          schema:
+            type: string
+            enum: [stdout, stderr]
+            default: stdout
+        - name: lines
+          in: query
+          required: false
+          description: 返回的行数
+          schema:
+            type: integer
+            default: 100
+            minimum: 1
+            maximum: 10000
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              example:
+                code: 0
+                message: success
+                data:
+                  service_name: "my-service"
+                  log_type: "stdout"
+                  lines:
+                    - "2026-03-17 10:30:00 Service starting..."
+                    - "2026-03-17 10:30:01 Service initialized"
+                    - "2026-03-17 10:30:02 Service ready"
+                  total_lines: 1500
+                  log_file: "/var/log/my-service/stdout.log"
+
+components:
+  securitySchemes:
+    ApiToken:
+      type: apiKey
+      in: header
+      name: X-API-Token
+      description: API Token 认证（可选，在配置文件中设置）
+
+  schemas:
+    ApiResponse:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: integer
+          description: 响应码，0 表示成功
+        message:
+          type: string
+          description: 响应消息
+        data:
+          type: object
+          description: 响应数据
+
+    ServiceBrief:
+      type: object
+      properties:
+        name:
+          type: string
+          description: 服务名称
+        description:
+          type: string
+          description: 服务描述
+        is_running:
+          type: boolean
+          description: 是否正在运行
+        pid:
+          type: integer
+          description: 进程ID
+        start_time:
+          type: string
+          format: date-time
+          description: 启动时间
+        uptime_seconds:
+          type: integer
+          description: 运行时长（秒）
+        fail_count:
+          type: integer
+          description: 失败计数
+        last_check:
+          type: string
+          format: date-time
+          description: 最后检查时间
+        monitor_mode:
+          type: string
+          enum: [self, monitor]
+          description: 监控模式
+
+    AgentInfo:
+      type: object
+      properties:
+        version:
+          type: string
+          description: Agent 版本
+        uuid:
+          type: string
+          description: Agent UUID
+        project_id:
+          type: string
+          description: 项目ID
+        workspace:
+          type: string
+          description: 工作空间路径
+        server:
+          type: string
+          description: 服务器地址
+        uptime_seconds:
+          type: integer
+          description: 运行时长（秒）
+        services_total:
+          type: integer
+          description: 服务总数
+        services_running:
+          type: integer
+          description: 运行中的服务数
+        go_version:
+          type: string
+          description: Go 版本
+        platform:
+          type: string
+          description: 平台信息
+
+    LogResponse:
+      type: object
+      properties:
+        service_name:
+          type: string
+          description: 服务名称
+        log_type:
+          type: string
+          enum: [stdout, stderr]
+          description: 日志类型
+        lines:
+          type: array
+          items:
+            type: string
+          description: 日志行
+        total_lines:
+          type: integer
+          description: 日志总行数
+        log_file:
+          type: string
+          description: 日志文件路径
