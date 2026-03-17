@@ -1,0 +1,56 @@
+name: build_sothothv1_agent
+on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - .github/workflows/build_sothothv1_agent.yml
+      - build/sothothv1_agent/*
+      - build/common/*
+      - Dockerfile
+env:
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        build_arch: [linux/amd64]
+        include:
+          - build_name: x86_64
+            build_arch: linux/amd64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with: 
+          submodules: true
+
+      - name: Setup
+        run: sudo apt-get install -y golang gcc-aarch64-linux-gnu
+
+      - name: Build
+        run: cd ${{ github.workspace }}/build/sothothv1_agent/ && bash build.sh
+
+      - name: Tar
+        run: cd ${{ github.workspace }}/build/gaiasec-server/plugins/nodeagent/ && mkdir -p bin && mv nodeagent-linux-amd64 bin/sothothv1_agent && tar -czvf "./sothothv1_agent-latest-linux-x86_64.tar.gz" ./bin/ && mv nodeagent-linux-arm64 bin/sothothv1_agent && tar -czvf "./sothothv1_agent-latest-linux-aarch64.tar.gz" ./bin/  && rm -rf ./bin/
+
+      - name: List Dir
+        run: ls -lRt ${{ github.workspace }}/build/gaiasec-server/plugins/nodeagent/
+
+
+      - name: Upload binary to artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sothothv1_agent-linux
+          path: ${{ github.workspace }}/build/gaiasec-server/plugins/nodeagent/*
+
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: v1.0
+          name: "Release v1.0"
+          artifacts: "${{ github.workspace }}/build/gaiasec-server/plugins/nodeagent/*"
+          artifactErrorsFailBuild: false
+          allowUpdates: true  # 允许更新已存在的release
+          token: ${{ secrets.GITHUB_TOKEN }}

@@ -1,3 +1,6 @@
 [submodule "build/nacos_client/frontend"]
 	path = build/nacos_client/frontend
 	url = https://github.com/runshine/nacos_client_frontend.git
+[submodule "build/sothothv1_agent"]
+	path = build/sothothv1_agent
+	url = git@github.com:UltramanGaia/gaiasec-nodeagent.git
