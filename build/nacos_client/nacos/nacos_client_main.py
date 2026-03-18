@@ -523,7 +523,9 @@ class ConfigManager:
                 'agent_service_report_interval_sec': 30,
                 'platform_agent_url': 'http://secflow-platform-agent.sothothv2-ns.svc.cluster.local',
                 'platform_agent_report_timeout_sec': 15,
-                'agent_key': ''
+                'agent_key': '',
+                'docker_compose_pull_timeout_sec': 300,
+                'docker_compose_up_timeout_sec': 1200
             }
 
             # 更新配置
@@ -604,7 +606,10 @@ class ServiceManager:
         self.config = config
         self.compose_root = Path(config['compose_root'])
         self.docker_compose_bin = config['docker_compose_bin']
+        self.docker_bin = config.get('docker_bin', 'docker')
         self.docker_socket = config['docker_socket']  # 保存docker_socket
+        self.pull_timeout_sec = int(config.get('docker_compose_pull_timeout_sec', 300))
+        self.up_timeout_sec = int(config.get('docker_compose_up_timeout_sec', 1200))
         self.db = DatabaseManager(config['database_file'])
 
         # 创建服务目录
@@ -684,6 +689,45 @@ class ServiceManager:
             return False, f"YAML格式错误: {e}"
         except Exception as e:
             return False, f"验证失败: {str(e)}"
+
+    def _extract_declared_container_names(self, compose_file: Path) -> List[str]:
+        """提取compose里显式声明的container_name。"""
+        try:
+            with open(compose_file, 'r', encoding='utf-8') as f:
+                parsed = yaml.safe_load(f.read()) or {}
+            services = parsed.get('services') or {}
+            names: List[str] = []
+            for _, cfg in services.items():
+                if not isinstance(cfg, dict):
+                    continue
+                cname = cfg.get('container_name')
+                if isinstance(cname, str) and cname.strip():
+                    names.append(cname.strip())
+            return names
+        except Exception:
+            return []
+
+    def _find_container_name_conflicts(self, container_names: List[str]) -> List[str]:
+        """检查container_name是否与现有容器重名。"""
+        if not container_names:
+            return []
+        try:
+            result = subprocess.run(
+                [self.docker_bin, 'ps', '-a', '--format', '{{.Names}}'],
+                capture_output=True,
+                text=True,
+                env=self.get_env_with_docker_host(),
+                timeout=10
+            )
+            if result.returncode != 0:
+                logger.warning(f"检查容器重名失败: {result.stderr}")
+                return []
+            existing = {line.strip() for line in result.stdout.splitlines() if line.strip()}
+            conflicts = [name for name in container_names if name in existing]
+            return conflicts
+        except Exception as e:
+            logger.warning(f"检查容器重名异常: {e}")
+            return []
 
     def get_file_type(self, file_path: Path) -> str:
         """获取文件类型"""
@@ -964,7 +1008,8 @@ class ServiceManager:
                 cmd,
                 capture_output=True,
                 text=True,
-                env=self.get_env_with_docker_host()
+                env=self.get_env_with_docker_host(),
+                timeout=self.pull_timeout_sec
             )
 
             # 执行docker-compose up -d
@@ -981,7 +1026,8 @@ class ServiceManager:
                 cmd,
                 capture_output=True,
                 text=True,
-                env=self.get_env_with_docker_host()
+                env=self.get_env_with_docker_host(),
+                timeout=self.up_timeout_sec
             )
 
             if result.returncode == 0:
@@ -992,7 +1038,13 @@ class ServiceManager:
                 )
                 return True, "服务启动成功"
             else:
-                return False, f"启动失败: {result.stderr}"
+                detail = (result.stderr or result.stdout or '').strip()
+                return False, f"启动失败: {detail}"
+
+        except subprocess.TimeoutExpired as e:
+            cmd = ' '.join(e.cmd) if isinstance(e.cmd, list) else str(e.cmd)
+            timeout_sec = int(e.timeout or 0)
+            return False, f"启动超时({timeout_sec}s): {cmd}"
 
         except Exception as e:
             logger.error(f"启动服务失败: {e}")
@@ -1072,6 +1124,13 @@ class ServiceManager:
             if not is_valid:
                 shutil.rmtree(service_path)
                 return False, f"YAML文件验证失败: {error_msg}"
+
+            # 预检查：避免container_name与已有容器冲突，导致“创建成功但启动失败”
+            declared_names = self._extract_declared_container_names(compose_file)
+            conflicts = self._find_container_name_conflicts(declared_names)
+            if conflicts:
+                shutil.rmtree(service_path, ignore_errors=True)
+                return False, f"container_name冲突: {', '.join(conflicts)}，请修改模板中的container_name后重试"
 
             # 插入数据库记录
             self.db.execute_query(
@@ -1193,6 +1252,13 @@ class ServiceManager:
             if not is_valid:
                 shutil.rmtree(service_path, ignore_errors=True)
                 return False, f"YAML文件验证失败: {error_msg}"
+
+            # 预检查：避免container_name与已有容器冲突
+            declared_names = self._extract_declared_container_names(target_yaml)
+            conflicts = self._find_container_name_conflicts(declared_names)
+            if conflicts:
+                shutil.rmtree(service_path, ignore_errors=True)
+                return False, f"container_name冲突: {', '.join(conflicts)}，请修改模板中的container_name后重试"
 
             # 插入数据库记录
             self.db.execute_query(
