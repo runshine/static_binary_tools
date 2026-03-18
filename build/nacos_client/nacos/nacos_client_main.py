@@ -518,7 +518,12 @@ class ConfigManager:
                 'max_upload_size': 100 * 1024 * 1024,  # 100MB
                 'database_file': './docker_manager.db',
                 'static_dir': './static',  # 静态文件目录
-                'static_index_file': 'index.html'  # 默认索引文件
+                'static_index_file': 'index.html',  # 默认索引文件
+                'agent_service_report_enabled': True,
+                'agent_service_report_interval_sec': 30,
+                'platform_agent_url': 'http://secflow-platform-agent.sothothv2-ns.svc.cluster.local',
+                'platform_agent_report_timeout_sec': 15,
+                'agent_key': ''
             }
 
             # 更新配置
@@ -3129,6 +3134,160 @@ def update_service_file(service_name):
         logger.error(f"更新服务文件失败: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/report/services/now', methods=['POST'])
+def report_services_now():
+    """手动触发一次服务上报"""
+    if not authenticate_request():
+        return jsonify({'error': '认证失败'}), 401
+
+    try:
+        if not service_reporter:
+            return jsonify({'error': 'service reporter not initialized'}), 500
+        service_reporter._report_full()
+        return jsonify({'message': 'service report triggered'}), 200
+    except Exception as e:
+        logger.error(f"手动触发服务上报失败: {e}")
+        return jsonify({'error': str(e)}), 500
+
+class AgentServiceReporter:
+    """Agent服务状态上报器（周期全量上报）"""
+
+    def __init__(self, config: Dict, service_manager: ServiceManager, logger_obj):
+        self.config = config
+        self.service_manager = service_manager
+        self.logger = logger_obj
+        self.enabled = bool(config.get('agent_service_report_enabled', False))
+        self.platform_agent_url = (config.get('platform_agent_url') or '').rstrip('/')
+        self.interval_sec = max(int(config.get('agent_service_report_interval_sec', 30)), 10)
+        self.timeout_sec = max(int(config.get('platform_agent_report_timeout_sec', 15)), 5)
+        self.agent_key = (config.get('agent_key') or '').strip()
+        self._stop_event = threading.Event()
+        self._thread = None
+
+    def set_agent_key(self, agent_key: str):
+        if agent_key and not self.agent_key:
+            self.agent_key = agent_key.strip()
+
+    def _extract_ports_from_compose(self, compose_data: Dict) -> Dict[str, str]:
+        ports: Dict[str, str] = {}
+        try:
+            services = compose_data.get('services') or {}
+            for _, svc in services.items():
+                svc_ports = svc.get('ports') or []
+                for idx, item in enumerate(svc_ports):
+                    if isinstance(item, str):
+                        ports[f'port_{idx}'] = item
+                    elif isinstance(item, dict):
+                        key = str(item.get('protocol') or item.get('name') or f'port_{idx}')
+                        val = str(item.get('published') or item.get('target') or item.get('port') or '')
+                        ports[key] = val
+                    else:
+                        ports[f'port_{idx}'] = str(item)
+            return ports
+        except Exception:
+            return {}
+
+    def _collect_services_snapshot(self) -> List[Dict[str, Any]]:
+        services = db_conn.execute(
+            "SELECT name, status FROM services ORDER BY name"
+        ).fetchall()
+
+        snapshot: List[Dict[str, Any]] = []
+        for row in services:
+            service_name = row['name']
+            service_status = row['status']
+            image = ''
+            ports: Dict[str, str] = {}
+
+            try:
+                status_info = self.service_manager.get_service_status(service_name)
+                if isinstance(status_info, dict):
+                    service_status = status_info.get('status') or service_status
+            except Exception:
+                pass
+
+            try:
+                compose_file = self.service_manager.get_compose_file(service_name)
+                if compose_file.exists():
+                    compose_data = self.service_manager.parse_compose_file(compose_file)
+                    if isinstance(compose_data, dict):
+                        svc_map = compose_data.get('services') or {}
+                        if svc_map:
+                            first_service = next(iter(svc_map.values()))
+                            if isinstance(first_service, dict):
+                                image = str(first_service.get('image') or '')
+                        ports = self._extract_ports_from_compose(compose_data)
+            except Exception:
+                pass
+
+            snapshot.append({
+                'name': service_name,
+                'status': str(service_status or 'unknown'),
+                'image': image,
+                'ports': ports
+            })
+
+        return snapshot
+
+    def _report_full(self):
+        if not self.enabled:
+            return
+        if not self.platform_agent_url:
+            return
+        if not self.agent_key:
+            self.logger.warning("服务上报跳过：agent_key 为空")
+            return
+
+        payload = {
+            'agent_key': self.agent_key,
+            'services': self._collect_services_snapshot()
+        }
+
+        headers = {
+            'Content-Type': 'application/json',
+            'X-Auth-Token': self.config.get('token', '')
+        }
+        url = f"{self.platform_agent_url}/api/agent/report/services/full"
+        resp = requests.post(url, headers=headers, json=payload, timeout=(5, self.timeout_sec))
+        if resp.status_code >= 300:
+            self.logger.warning(f"服务上报失败: status={resp.status_code}, body={resp.text[:200]}")
+        else:
+            self.logger.info(f"服务上报成功: agent={self.agent_key}, count={len(payload['services'])}")
+
+    def _loop(self):
+        # 启动后立即全量上报一次
+        try:
+            self._report_full()
+        except Exception as e:
+            self.logger.warning(f"首次服务上报失败: {e}")
+
+        while not self._stop_event.wait(self.interval_sec):
+            try:
+                self._report_full()
+            except Exception as e:
+                self.logger.warning(f"周期服务上报失败: {e}")
+
+    def start(self):
+        if not self.enabled:
+            self.logger.info("服务上报功能未启用")
+            return
+        if not self.platform_agent_url:
+            self.logger.info("服务上报功能已启用，但 platform_agent_url 未配置，跳过启动")
+            return
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="agent-service-reporter")
+        self._thread.start()
+        self.logger.info(
+            f"服务上报线程已启动: url={self.platform_agent_url}, interval={self.interval_sec}s, agent_key={self.agent_key or 'N/A'}"
+        )
+
+    def stop(self):
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join(timeout=3)
+
 # ===================== 辅助函数 =====================
 
 def authenticate_request():
@@ -3202,10 +3361,11 @@ def extract_uuid_from_config(file_path):
 service_manager = None
 system_info_collector = None
 static_file_server = None
+service_reporter = None
 
 def main():
     """主函数"""
-    global logger, config, service_manager, system_info_collector, docker_client, static_file_server
+    global logger, config, service_manager, system_info_collector, docker_client, static_file_server, service_reporter
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     os.chdir(script_dir)
@@ -3251,11 +3411,18 @@ def main():
     except Exception as e:
         logger.error(f"读取sothothv2_agent.ini配置文件失败: {e}")
 
+    if not config.get('agent_key') and uuid_value:
+        config['agent_key'] = uuid_value
+
     # 启动服务器
     server = WebServer(args.config, docker_client)
     service_manager = server.service_manager
     system_info_collector = SystemInfoCollector(docker_client)
     static_file_server = server.static_file_server
+    service_reporter = AgentServiceReporter(config, service_manager, logger)
+    if uuid_value:
+        service_reporter.set_agent_key(uuid_value)
+    service_reporter.start()
 
     # 创建示例静态文件（如果目录为空）
     static_dir = Path(config.get('static_dir', './static'))
@@ -3278,4 +3445,3 @@ def main():
     nacos_thread.start()
 
     server.run()
-
