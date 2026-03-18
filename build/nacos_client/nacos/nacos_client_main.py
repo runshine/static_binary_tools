@@ -36,6 +36,7 @@ from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
 import docker
 from docker.errors import DockerException, APIError
+import requests
 from common_utils import setup_logger,setup_grace_exit,get_sothoth_ip_address
 from nacos_client_monitor import start_nacos,graceful_exit
 from urllib.parse import urlparse
