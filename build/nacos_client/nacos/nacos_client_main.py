@@ -525,7 +525,7 @@ class ConfigManager:
                 'platform_agent_url': 'http://secflow-platform-agent.sothothv2-ns.svc.cluster.local',
                 'platform_agent_report_timeout_sec': 15,
                 'agent_key': '',
-                'docker_compose_pull_timeout_sec': 300,
+                'docker_compose_pull_timeout_sec': 1800,
                 'docker_compose_up_timeout_sec': 1200
             }
 
