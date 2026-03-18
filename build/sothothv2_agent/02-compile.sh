@@ -10,11 +10,13 @@ source "$(cd `dirname $0`;pwd)/../common/arch_detect.sh"
 
 export TZ="GMT+8"
 ARCHS=("x86_64" "aarch64" "armhf" "armel" "riscv64")
-BUILD_VERSION=$(date +"%Y%m%d.%H%M%S")
-VERSION="${BUILD_VERSION}"
-echo "build version: ${VERSION}, current date: $(date)"
-sed -i "s/20060102.150405/${VERSION}/g" main.go
-VERSION="latest"
+SEMVER="${SEMVER:-v0.1.0}"
+BUILD_VERSION=$(date -u +"%Y%m%d.%H%M%S")
+BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+GIT_COMMIT=$(git rev-parse --short=12 HEAD 2>/dev/null || echo "unknown")
+VERSION="${SEMVER}-${BUILD_VERSION}"
+LDFLAGS="-s -w -X main.Version=${SEMVER} -X main.BuildVersion=${BUILD_VERSION} -X main.BuildTime=${BUILD_TIME} -X main.GitCommit=${GIT_COMMIT}"
+echo "build version: ${VERSION}, build_time: ${BUILD_TIME}, commit: ${GIT_COMMIT}"
 
 go mod tidy
 go mod download
@@ -54,14 +56,14 @@ for arch in "${ARCHS[@]}"; do
 
     if [ -n "$GOARM" ]; then
         CGO_ENABLED=0 GOOS=linux GOARCH=$GOARCH GOARM=$GOARM \
-        go build -ldflags="-s -w -X main.Version=$VERSION" \
+        go build -ldflags="${LDFLAGS}" \
         -o "bin/sothothv2_agent" .
         strip_elf_files "./bin/"
         tar -czvf "${INSTALL_DIR}/sothothv2_agent-${VERSION}-linux-${arch}.tar.gz" ./bin/
         rm "bin/sothothv2_agent"
     else
         CGO_ENABLED=0 GOOS=linux GOARCH=$GOARCH \
-        go build -ldflags="-s -w -X main.Version=$VERSION" \
+        go build -ldflags="${LDFLAGS}" \
         -o "bin/sothothv2_agent" .
         strip_elf_files "./bin/"
         tar -czvf "${INSTALL_DIR}/sothothv2_agent-${VERSION}-linux-${arch}.tar.gz" ./bin/

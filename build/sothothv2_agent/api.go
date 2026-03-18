@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -53,9 +54,12 @@ type ServiceDetail struct {
 // AgentInfo Agent 综合状态信息
 type AgentInfo struct {
 	// 版本信息
-	Version   string `json:"version"`
-	GoVersion string `json:"go_version"`
-	Platform  string `json:"platform"`
+	Version      string `json:"version"`
+	BuildVersion string `json:"build_version"`
+	BuildTime    string `json:"build_time"`
+	GitCommit    string `json:"git_commit"`
+	GoVersion    string `json:"go_version"`
+	Platform     string `json:"platform"`
 
 	// 基本信息
 	UUID      string `json:"uuid"`
@@ -300,9 +304,12 @@ func handleAgentInfo(w http.ResponseWriter, r *http.Request) {
 
 	respondSuccess(w, AgentInfo{
 		// 版本信息
-		Version:   BuildVersion,
-		GoVersion: "go1.21",
-		Platform:  "linux/amd64",
+		Version:      readableVersion(),
+		BuildVersion: BuildVersion,
+		BuildTime:    normalizedBuildTime(),
+		GitCommit:    shortCommit(),
+		GoVersion:    runtime.Version(),
+		Platform:     fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
 
 		// 基本信息
 		UUID:      monitorConfig.UUID,

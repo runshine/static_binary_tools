@@ -83,8 +83,11 @@ type RotateConfig struct {
 
 // 全局变量
 var (
-	// 版本号使用日期格式：YYYYMMDD.HHMMSS
-	BuildVersion = time.Now().Format("20060102.150405")
+	// 版本信息（由编译脚本通过 ldflags 注入）
+	Version      = "v0.1.0"
+	BuildVersion = "dev"
+	BuildTime    = ""
+	GitCommit    = "unknown"
 
 	// 命令行参数
 	configFile   = flag.String("config", "monitor.ini", "配置文件路径")
@@ -133,9 +136,62 @@ const (
 	ServiceStopTimeout   = 10 * time.Second // 服务停止超时时间
 )
 
+func shortCommit() string {
+	commit := strings.TrimSpace(GitCommit)
+	if commit == "" || commit == "unknown" {
+		return "unknown"
+	}
+	if len(commit) > 12 {
+		return commit[:12]
+	}
+	return commit
+}
+
+func normalizedBuildTime() string {
+	bt := strings.TrimSpace(BuildTime)
+	if bt == "" {
+		return "unknown"
+	}
+	layouts := []string{
+		time.RFC3339,
+		"2006-01-02 15:04:05",
+		"20060102.150405",
+	}
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, bt); err == nil {
+			return t.UTC().Format("2006-01-02 15:04:05 UTC")
+		}
+	}
+	return bt
+}
+
+func readableVersion() string {
+	version := strings.TrimSpace(Version)
+	if version == "" {
+		version = "v0.1.0"
+	}
+	build := strings.TrimSpace(BuildVersion)
+	if build == "" {
+		build = "dev"
+	}
+	return fmt.Sprintf("%s (build=%s, commit=%s, time=%s)", version, build, shortCommit(), normalizedBuildTime())
+}
+
+func versionTagForLog() string {
+	version := strings.TrimSpace(Version)
+	build := strings.TrimSpace(BuildVersion)
+	if version == "" {
+		version = "v0.1.0"
+	}
+	if build == "" || build == "dev" {
+		return version
+	}
+	return fmt.Sprintf("%s/%s", version, build)
+}
+
 func init() {
 	// 初始化日志
-	logger = log.New(os.Stdout, fmt.Sprintf("[SothothV2 %s] ", BuildVersion), log.LstdFlags|log.Lshortfile)
+	logger = log.New(os.Stdout, fmt.Sprintf("[SothothV2 %s] ", versionTagForLog()), log.LstdFlags|log.Lshortfile)
 
 	// 初始化信号通道
 	signalChan = make(chan os.Signal, 1)
@@ -145,8 +201,12 @@ func main() {
 	flag.Parse()
 
 	if *versionFlag {
-		fmt.Printf("SothothV2 Monitor Agent Version: %s\n", BuildVersion)
-		fmt.Printf("Build Time: %s\n", time.Now().Format("2006-01-02 15:04:05"))
+		fmt.Printf("SothothV2 Monitor Agent\n")
+		fmt.Printf("Version: %s\n", Version)
+		fmt.Printf("Build: %s\n", BuildVersion)
+		fmt.Printf("Commit: %s\n", shortCommit())
+		fmt.Printf("Build Time: %s\n", normalizedBuildTime())
+		fmt.Printf("Display: %s\n", readableVersion())
 		return
 	}
 
@@ -164,7 +224,7 @@ func main() {
 		saveConfigToFile(*configFile)
 	}
 
-	logger.Printf("Starting SothothV2 Agent v%s", BuildVersion)
+	logger.Printf("Starting SothothV2 Agent %s", readableVersion())
 
 	// 设置日志级别和路径
 	setupLogger()
@@ -1861,7 +1921,7 @@ func printStatusReport() {
 	shutdownMutex.RUnlock()
 
 	logger.Println("========== Status Report ==========")
-	logger.Printf("Agent Version: %s", BuildVersion)
+	logger.Printf("Agent Version: %s", readableVersion())
 	logger.Printf("Agent UUID: %s", monitorConfig.UUID)
 	logger.Printf("Uptime: %s", time.Now().Format("2006-01-02 15:04:05"))
 	logger.Printf("Total services: %d", len(services))
