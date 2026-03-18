@@ -104,6 +104,7 @@ const (
 	APICodeServiceRunning  = 1002
 	APICodeServiceStopped  = 1003
 	APICodeShuttingDown    = 1004
+	APICodeUninstallFailed = 1005
 	APICodeBadRequest      = 2001
 	APICodeUnauthorized    = 2002
 	APICodeInternalError   = 5001
@@ -129,6 +130,7 @@ func startAPIServer() {
 	// 注册路由
 	mux.HandleFunc("/api/v1/agent/health", handleHealth)
 	mux.HandleFunc("/api/v1/agent/info", authMiddleware(handleAgentInfo))
+	mux.HandleFunc("/api/v1/agent/uninstall", authMiddleware(handleAgentUninstall))
 	mux.HandleFunc("/api/v1/services", authMiddleware(handleServices))
 	mux.HandleFunc("/api/v1/services/", authMiddleware(handleServiceRouter))
 
@@ -597,6 +599,34 @@ func handleServiceLogs(w http.ResponseWriter, r *http.Request, serviceName strin
 		TotalLines:  totalLines,
 		LogFile:     logFile,
 	})
+}
+
+// handleAgentUninstall 卸载 Agent（停止服务、删除工作空间、退出自身）
+func handleAgentUninstall(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		respondError(w, APICodeBadRequest, "Method not allowed")
+		return
+	}
+
+	workspacePath := strings.TrimSpace(monitorConfig.Workspace)
+	if err := validateWorkspaceForUninstall(workspacePath); err != nil {
+		respondError(w, APICodeUninstallFailed, fmt.Sprintf("Uninstall validation failed: %v", err))
+		return
+	}
+
+	respondSuccess(w, map[string]interface{}{
+		"action":    "uninstall",
+		"status":    "initiated",
+		"workspace": workspacePath,
+	})
+
+	// 返回响应后异步执行卸载，避免请求中断导致前端无法拿到结果
+	go func(ws string) {
+		time.Sleep(300 * time.Millisecond)
+		if err := performUninstall(ws); err != nil {
+			logger.Printf("Uninstall failed: %v", err)
+		}
+	}(workspacePath)
 }
 
 // readLastLines 读取文件最后 N 行
