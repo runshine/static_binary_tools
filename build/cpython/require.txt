@@ -8,3 +8,4 @@ psutil
 configparser
 jsonlines
 dnspython
+flask-sock
