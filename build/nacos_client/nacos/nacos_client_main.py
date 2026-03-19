@@ -1530,6 +1530,7 @@ class ServiceManager:
         service_name: str,
         container_name: Optional[str] = None,
         shell_cmd: str = '/bin/sh',
+        mode: str = 'shell',
         user: Optional[str] = None
     ) -> Tuple[bool, Optional[subprocess.Popen], str]:
         """启动容器交互shell进程（用于WebSocket实时终端）。"""
@@ -1543,16 +1544,54 @@ class ServiceManager:
                 return False, None, "无法解析容器名称，请指定container参数"
 
             project_name = service_name
-            cmd = [
-                self.docker_compose_bin,
-                '-f', str(compose_file),
-                '-p', project_name,
-                'exec',
-                '-T',
-            ]
-            if user:
-                cmd.extend(['-u', user])
-            cmd.extend([resolved_container, shell_cmd])
+            terminal_mode = (mode or 'shell').strip().lower()
+
+            if terminal_mode == 'attach':
+                ps_cmd = [
+                    self.docker_compose_bin,
+                    '-f', str(compose_file),
+                    '-p', project_name,
+                    'ps',
+                    '-q',
+                    resolved_container
+                ]
+                ps_result = subprocess.run(
+                    ps_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    env=self.get_env_with_docker_host()
+                )
+                container_id = (ps_result.stdout or '').strip().splitlines()
+                if ps_result.returncode != 0 or not container_id:
+                    err = (ps_result.stderr or '').strip() or f'无法找到容器: {resolved_container}'
+                    return False, None, f'attach失败: {err}'
+
+                cmd = [self.docker_bin, 'attach', container_id[0]]
+            else:
+                requested_shell = (shell_cmd or '').strip() or '/bin/sh'
+                # 避免容器不存在 /bin/bash 导致“连上即断开”，对常见 shell 做自动回退。
+                if requested_shell in ('/bin/bash', 'bash', '/bin/sh', 'sh'):
+                    fallback_script = (
+                        'if command -v bash >/dev/null 2>&1; then exec bash; '
+                        'elif [ -x /bin/bash ]; then exec /bin/bash; '
+                        'elif command -v sh >/dev/null 2>&1; then exec sh; '
+                        'else exec /bin/sh; fi'
+                    )
+                    exec_cmd = ['sh', '-lc', fallback_script]
+                else:
+                    exec_cmd = ['sh', '-lc', requested_shell]
+
+                cmd = [
+                    self.docker_compose_bin,
+                    '-f', str(compose_file),
+                    '-p', project_name,
+                    'exec',
+                    '-T',
+                ]
+                if user:
+                    cmd.extend(['-u', user])
+                cmd.extend([resolved_container, *exec_cmd])
 
             proc = subprocess.Popen(
                 cmd,
@@ -2648,12 +2687,14 @@ def execute_service_command_ws(ws, service_name):
 
         container_name = (params.get('container') or '').strip() or None
         shell_cmd = (params.get('shell') or '/bin/sh').strip() or '/bin/sh'
+        mode = (params.get('mode') or 'shell').strip().lower() or 'shell'
         user = (params.get('user') or '').strip() or None
 
         ok, process, resolved = service_manager.start_exec_shell_process(
             service_name=service_name,
             container_name=container_name,
             shell_cmd=shell_cmd,
+            mode=mode,
             user=user
         )
         if not ok or not process:
@@ -2661,7 +2702,7 @@ def execute_service_command_ws(ws, service_name):
             ws.close()
             return
 
-        ws.send(f"\r\n[OK] 已连接服务 {service_name} 容器 {resolved}，shell={shell_cmd}\r\n\r\n")
+        ws.send(f"\r\n[OK] 已连接服务 {service_name} 容器 {resolved}，mode={mode}，shell={shell_cmd}\r\n\r\n")
 
         stop_event = threading.Event()
         send_lock = threading.Lock()
@@ -2696,6 +2737,9 @@ def execute_service_command_ws(ws, service_name):
                         if msg_type == 'resize':
                             # 当前后端使用非TTY(-T)模式，先忽略resize请求，避免协议报错
                             continue
+                        # 兼容前端历史格式: {"resize":{"rows":..,"cols":..}}
+                        if 'resize' in parsed:
+                            continue
                         if msg_type == 'input':
                             msg = parsed.get('data', '')
                 except Exception:
@@ -2721,7 +2765,12 @@ def execute_service_command_ws(ws, service_name):
                 pass
 
     except Exception as e:
-        logger.error(f"WebSocket执行命令失败: {e}", exc_info=True)
+        # 客户端主动关闭(1000/1005等)属于常见行为，不应作为高优先级错误刷屏。
+        msg = str(e)
+        if 'Connection closed' in msg:
+            logger.info(f"WebSocket会话结束: {msg}")
+        else:
+            logger.error(f"WebSocket执行命令失败: {e}", exc_info=True)
         try:
             ws.send(f"\r\n[ERROR] {str(e)}\r\n")
             ws.close()
