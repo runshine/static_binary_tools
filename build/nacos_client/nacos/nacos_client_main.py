@@ -51,6 +51,7 @@ db_conn = None
 docker_client = None
 server_should_stop = False
 logger = None
+VERSION_FILE = Path(__file__).resolve().parent / 'version.json'
 
 # ===================== 系统信息收集相关类 =====================
 
@@ -2180,8 +2181,13 @@ def validate_token():
             request_path=request_path
         )
 
+        version_info = _build_agent_version_info()
+
         # 转换为字典返回
         result_dict = asdict(auth_result)
+        result_dict['nacos_agent_version'] = version_info['date']
+        result_dict['nacos_agent_version_human'] = version_info['human']
+        result_dict['nacos_agent_version_semver'] = version_info['semver']
 
         # 根据鉴权结果设置HTTP状态码
         status_code = 200 if authenticated else 401
@@ -2215,6 +2221,7 @@ def get_auth_info():
         token_length = len(config_token)
         token_prefix = config_token[:3] + "..." if len(config_token) > 3 else "***"
 
+        version_info = _build_agent_version_info()
         return jsonify({
             'timestamp': datetime.now().isoformat(),
             'client_ip': client_ip,
@@ -2227,6 +2234,9 @@ def get_auth_info():
             'config_token_prefix': token_prefix,
             'auth_required': True,
             'auth_method': 'X-Auth-Token header or token parameter',
+            'nacos_agent_version': version_info['date'],
+            'nacos_agent_version_human': version_info['human'],
+            'nacos_agent_version_semver': version_info['semver'],
             'message': '此API不需要认证，仅用于获取认证信息'
         })
 
@@ -2247,6 +2257,7 @@ def get_system_info():
         return jsonify({'error': '认证失败'}), 401
 
     try:
+        version_info = _build_agent_version_info()
         # 获取系统信息
         system_info = system_info_collector.get_system_info()
 
@@ -2260,10 +2271,15 @@ def get_system_info():
                 return obj
 
         result = dataclass_to_dict(system_info)
+        result['nacos_agent_version'] = version_info['date']
+        result['nacos_agent_version_human'] = version_info['human']
+        result['nacos_agent_version_semver'] = version_info['semver']
 
         # 添加格式化信息（便于阅读）
         result['formatted'] = {
-            'nacos_agent_version': '20260101.0101',
+            'nacos_agent_version': version_info['date'],
+            'nacos_agent_version_human': version_info['human'],
+            'nacos_agent_version_semver': version_info['semver'],
             'uptime': format_uptime(result['uptime']),
             'memory': {
                 'total': format_bytes(result['memory']['total']),
@@ -2566,10 +2582,13 @@ def get_docker_images():
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """健康检查"""
+    version_info = _build_agent_version_info()
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
-        'version': '1.0.0'
+        'version': version_info['semver'],
+        'nacos_agent_version': version_info['date'],
+        'nacos_agent_version_human': version_info['human']
     })
 
 @app.route('/api/services', methods=['GET'])
@@ -3847,6 +3866,56 @@ def format_uptime(seconds: int) -> str:
         parts.append(f"{seconds}秒")
 
     return ' '.join(parts)
+
+
+def _build_agent_version_info() -> Dict[str, str]:
+    """
+    统一构建版本信息：
+    - date: 机器可解析版本（日期构建号）
+    - human: 人类可读版本
+    - semver: 近似语义化版本（便于排序/展示）
+    """
+    # 优先读取构建产物中的版本文件（由build.sh动态生成）
+    if VERSION_FILE.exists():
+        try:
+            with open(VERSION_FILE, 'r', encoding='utf-8') as f:
+                payload = json.load(f) or {}
+            date_value = str(payload.get('date') or '').strip()
+            human_value = str(payload.get('human') or '').strip()
+            semver_value = str(payload.get('semver') or '').strip()
+            if date_value and human_value and semver_value:
+                return {
+                    'date': date_value,
+                    'human': human_value,
+                    'semver': semver_value
+                }
+        except Exception:
+            pass
+
+    # 兜底：开发环境无version.json时，使用当前时间构造
+    raw_date = datetime.now().strftime('%Y%m%d.%H%M%S')
+    custom_human = ''
+
+    # 支持: YYYYMMDD.XXXX / YYYYMMDD-XXXX / YYYYMMDDXXXX
+    cleaned = raw_date.replace('-', '.')
+    m = re.match(r'^(\d{4})(\d{2})(\d{2})(?:\.?(\d{2,8}))?$', cleaned)
+    if m:
+        y, mo, d, build = m.group(1), m.group(2), m.group(3), (m.group(4) or '')
+        auto_human = f"v{y}.{mo}.{d}" + (f" (build {build})" if build else '')
+        semver = f"{int(y)}.{int(mo)}.{int(d)}" + (f"+{build}" if build else '')
+        return {
+            'date': raw_date,
+            'human': custom_human or auto_human,
+            'semver': semver
+        }
+
+    # 无法解析时回退：仍保证有可读输出
+    fallback_human = custom_human or f"build-{raw_date}"
+    return {
+        'date': raw_date,
+        'human': fallback_human,
+        'semver': raw_date
+    }
 
 def restart_server():
     """重启服务器"""

@@ -13,10 +13,27 @@ curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
 \. "$HOME/.nvm/nvm.sh"
 nvm install 24
 
-VERSION=$(date +"%Y%m%d.%H%M%S")
+VERSION_DATE=$(date +"%Y%m%d.%H%M%S")
+YEAR=${VERSION_DATE:0:4}
+MONTH=${VERSION_DATE:4:2}
+DAY=${VERSION_DATE:6:2}
+BUILD=${VERSION_DATE#*.}
+VERSION_HUMAN="v${YEAR}.${MONTH}.${DAY} (build ${BUILD})"
+VERSION_SEMVER="${YEAR}.$((10#${MONTH})).$((10#${DAY}))+${BUILD}"
+
 cd /build
-sed -i "s/20260101.0101/${VERSION}/g" nacos/nacos_client.py
-echo "build version: ${VERSION}, current date: $(date)"
+cat > nacos/version.json <<EOF
+{
+  "date": "${VERSION_DATE}",
+  "human": "${VERSION_HUMAN}",
+  "semver": "${VERSION_SEMVER}",
+  "build_time": "$(date -Iseconds)",
+  "build_tz": "${TZ}"
+}
+EOF
+echo "build version date: ${VERSION_DATE}"
+echo "build version human: ${VERSION_HUMAN}"
+echo "build version semver: ${VERSION_SEMVER}"
 
 VERSION="latest"
 
