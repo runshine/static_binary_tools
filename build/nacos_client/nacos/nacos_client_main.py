@@ -174,6 +174,15 @@ class AuthResult:
     request_method: str
     request_path: str
 
+
+@dataclass
+class ExecSession:
+    """WebSocket 终端会话。"""
+    process: subprocess.Popen
+    resolved_container: str
+    mode: str
+    detach_sequence: bytes = b''
+
 class SystemInfoCollector:
     """系统信息收集器"""
 
@@ -1717,7 +1726,7 @@ class ServiceManager:
         shell_cmd: str = '/bin/sh',
         mode: str = 'shell',
         user: Optional[str] = None
-    ) -> Tuple[bool, Optional[subprocess.Popen], str]:
+    ) -> Tuple[bool, Optional[ExecSession], str]:
         """启动容器交互shell进程（用于WebSocket实时终端）。"""
         try:
             compose_file = self.get_compose_file(service_name)
@@ -1730,6 +1739,7 @@ class ServiceManager:
 
             project_name = service_name
             terminal_mode = (mode or 'shell').strip().lower()
+            detach_sequence = b''
 
             if terminal_mode == 'attach':
                 ps_cmd = [
@@ -1752,7 +1762,17 @@ class ServiceManager:
                     err = (ps_result.stderr or '').strip() or f'无法找到容器: {resolved_container}'
                     return False, None, f'attach失败: {err}'
 
-                cmd = [self.docker_bin, 'attach', container_id[0]]
+                # attach 模式退出时必须“脱离”而不是把容器主进程一起带走。
+                # 1) --sig-proxy=false: docker attach 客户端退出/收信号时，不向容器转发终止信号
+                # 2) --detach-keys=ctrl-p,ctrl-q: WebSocket 关闭时，先发标准脱离序列，再结束 attach 客户端
+                cmd = [
+                    self.docker_bin,
+                    'attach',
+                    '--sig-proxy=false',
+                    '--detach-keys=ctrl-p,ctrl-q',
+                    container_id[0]
+                ]
+                detach_sequence = b'\x10\x11'
             else:
                 requested_shell = (shell_cmd or '').strip() or '/bin/sh'
                 # 避免容器不存在 /bin/bash 导致“连上即断开”，对常见 shell 做自动回退。
@@ -1794,10 +1814,57 @@ class ServiceManager:
                 bufsize=0,
                 env=self.get_env_with_docker_host()
             )
-            return True, proc, resolved_container
+            return True, ExecSession(
+                process=proc,
+                resolved_container=resolved_container,
+                mode=terminal_mode,
+                detach_sequence=detach_sequence
+            ), resolved_container
         except Exception as e:
             logger.error(f"启动容器交互shell失败: {e}")
             return False, None, f"启动交互shell失败: {str(e)}"
+
+    def stop_exec_session(self, session: ExecSession, graceful_timeout: float = 2.0):
+        """停止交互终端会话。
+
+        attach 模式优先发送 docker detach 序列，避免把容器主进程一起停掉。
+        shell 模式则直接结束子进程。
+        """
+        try:
+            process = session.process if session else None
+            if not process or process.poll() is not None:
+                return
+
+            if session.mode == 'attach':
+                detached = False
+                try:
+                    if process.stdin and session.detach_sequence:
+                        process.stdin.write(session.detach_sequence)
+                        process.stdin.flush()
+                        detached = True
+                except Exception:
+                    detached = False
+
+                try:
+                    if process.stdin:
+                        process.stdin.close()
+                except Exception:
+                    pass
+
+                if detached:
+                    try:
+                        process.wait(timeout=graceful_timeout)
+                        return
+                    except Exception:
+                        pass
+
+            process.terminate()
+            try:
+                process.wait(timeout=graceful_timeout)
+            except Exception:
+                process.kill()
+        except Exception as e:
+            logger.warning(f"停止终端会话失败: {e}")
 
     def restart_all_enabled_services(self):
         """重启所有启用的服务"""
@@ -2924,14 +2991,14 @@ def execute_service_command_ws(ws, service_name):
         mode = (params.get('mode') or 'shell').strip().lower() or 'shell'
         user = (params.get('user') or '').strip() or None
 
-        ok, process, resolved = service_manager.start_exec_shell_process(
+        ok, session, resolved = service_manager.start_exec_shell_process(
             service_name=service_name,
             container_name=container_name,
             shell_cmd=shell_cmd,
             mode=mode,
             user=user
         )
-        if not ok or not process:
+        if not ok or not session:
             ws.send(f"\r\n[ERROR] {resolved}\r\n")
             ws.close()
             return
@@ -2940,6 +3007,7 @@ def execute_service_command_ws(ws, service_name):
 
         stop_event = threading.Event()
         send_lock = threading.Lock()
+        process = session.process
 
         def _pump_stream(stream_obj, prefix: str = ''):
             try:
@@ -2985,12 +3053,8 @@ def execute_service_command_ws(ws, service_name):
         finally:
             stop_event.set()
             try:
-                if process and process.poll() is None:
-                    process.terminate()
-                    try:
-                        process.wait(timeout=2)
-                    except Exception:
-                        process.kill()
+                if session:
+                    service_manager.stop_exec_session(session)
             except Exception:
                 pass
             try:
