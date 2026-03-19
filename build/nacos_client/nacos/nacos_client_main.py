@@ -3296,6 +3296,18 @@ class AgentServiceReporter:
 
         return snapshot
 
+    def _resolve_report_ip(self) -> str:
+        try:
+            ip = get_sothoth_ip_address()
+            if ip:
+                return str(ip)
+        except Exception:
+            pass
+        try:
+            return str(socket.gethostbyname(socket.gethostname()))
+        except Exception:
+            return ''
+
     def _report_full(self):
         if not self.enabled:
             return
@@ -3305,8 +3317,15 @@ class AgentServiceReporter:
             self.logger.warning("服务上报跳过：agent_key 为空")
             return
 
+        report_ip = self._resolve_report_ip()
+        workspace_id = str(self.config.get('workspace_id') or '').strip()
+        hostname = socket.gethostname()
         payload = {
             'agent_key': self.agent_key,
+            'project_id': workspace_id,
+            'hostname': hostname,
+            'ip_address': report_ip,
+            'full_name': f"{workspace_id}-{hostname}-{report_ip}" if workspace_id and report_ip else '',
             'services': self._collect_services_snapshot()
         }
 
