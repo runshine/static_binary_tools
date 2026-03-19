@@ -34,16 +34,18 @@ import configparser
 
 from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
+from flask_sock import Sock
 import docker
 from docker.errors import DockerException, APIError
 import requests
 from common_utils import setup_logger,setup_grace_exit,get_sothoth_ip_address
 from nacos_client_monitor import start_nacos,graceful_exit
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 
 # 全局变量
 app = Flask(__name__)
 CORS(app)
+sock = Sock(app)
 config = {}
 db_conn = None
 docker_client = None
@@ -1511,6 +1513,61 @@ class ServiceManager:
             logger.error(f"执行命令失败: {e}")
             return False, f"执行失败: {str(e)}"
 
+    def resolve_default_container_name(self, service_name: str) -> Optional[str]:
+        """解析服务默认容器名（优先Compose服务名）。"""
+        try:
+            status_info = self.get_service_status(service_name)
+            containers = status_info.get('containers') or []
+            if not containers:
+                return None
+            first = containers[0] or {}
+            return first.get('Service') or first.get('service') or first.get('Name') or first.get('name')
+        except Exception:
+            return None
+
+    def start_exec_shell_process(
+        self,
+        service_name: str,
+        container_name: Optional[str] = None,
+        shell_cmd: str = '/bin/sh',
+        user: Optional[str] = None
+    ) -> Tuple[bool, Optional[subprocess.Popen], str]:
+        """启动容器交互shell进程（用于WebSocket实时终端）。"""
+        try:
+            compose_file = self.get_compose_file(service_name)
+            if not compose_file.exists():
+                return False, None, f"服务 {service_name} 不存在"
+
+            resolved_container = (container_name or '').strip() or self.resolve_default_container_name(service_name)
+            if not resolved_container:
+                return False, None, "无法解析容器名称，请指定container参数"
+
+            project_name = service_name
+            cmd = [
+                self.docker_compose_bin,
+                '-f', str(compose_file),
+                '-p', project_name,
+                'exec',
+                '-T',
+            ]
+            if user:
+                cmd.extend(['-u', user])
+            cmd.extend([resolved_container, shell_cmd])
+
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=False,
+                bufsize=0,
+                env=self.get_env_with_docker_host()
+            )
+            return True, proc, resolved_container
+        except Exception as e:
+            logger.error(f"启动容器交互shell失败: {e}")
+            return False, None, f"启动交互shell失败: {str(e)}"
+
     def restart_all_enabled_services(self):
         """重启所有启用的服务"""
         try:
@@ -2572,6 +2629,106 @@ def execute_service_command(service_name):
         return jsonify({'error': str(e)}), 500
 
 
+@sock.route('/api/services/<service_name>/exec/ws')
+def execute_service_command_ws(ws, service_name):
+    """在服务容器内执行交互式命令（WebSocket实时终端）。"""
+    try:
+        if not authenticate_ws_request(ws):
+            ws.send("\r\n[AUTH] 认证失败，连接关闭。\r\n")
+            ws.close()
+            return
+
+        env = ws.environ or {}
+        params = {}
+        raw_qs = env.get('QUERY_STRING') or ''
+        for pair in raw_qs.split('&'):
+            if '=' in pair:
+                k, v = pair.split('=', 1)
+                params[k] = unquote(v)
+
+        container_name = (params.get('container') or '').strip() or None
+        shell_cmd = (params.get('shell') or '/bin/sh').strip() or '/bin/sh'
+        user = (params.get('user') or '').strip() or None
+
+        ok, process, resolved = service_manager.start_exec_shell_process(
+            service_name=service_name,
+            container_name=container_name,
+            shell_cmd=shell_cmd,
+            user=user
+        )
+        if not ok or not process:
+            ws.send(f"\r\n[ERROR] {resolved}\r\n")
+            ws.close()
+            return
+
+        ws.send(f"\r\n[OK] 已连接服务 {service_name} 容器 {resolved}，shell={shell_cmd}\r\n\r\n")
+
+        stop_event = threading.Event()
+        send_lock = threading.Lock()
+
+        def _pump_stream(stream_obj, prefix: str = ''):
+            try:
+                while not stop_event.is_set():
+                    chunk = stream_obj.read(1024)
+                    if not chunk:
+                        break
+                    text = chunk.decode('utf-8', errors='replace')
+                    with send_lock:
+                        ws.send(prefix + text if prefix else text)
+            except Exception:
+                pass
+
+        stdout_thread = threading.Thread(target=_pump_stream, args=(process.stdout, ''), daemon=True)
+        stderr_thread = threading.Thread(target=_pump_stream, args=(process.stderr, ''), daemon=True)
+        stdout_thread.start()
+        stderr_thread.start()
+
+        try:
+            while not stop_event.is_set():
+                msg = ws.receive()
+                if msg is None:
+                    break
+
+                try:
+                    parsed = json.loads(msg)
+                    if isinstance(parsed, dict):
+                        msg_type = parsed.get('type')
+                        if msg_type == 'resize':
+                            # 当前后端使用非TTY(-T)模式，先忽略resize请求，避免协议报错
+                            continue
+                        if msg_type == 'input':
+                            msg = parsed.get('data', '')
+                except Exception:
+                    pass
+
+                if isinstance(msg, str) and process.stdin:
+                    process.stdin.write(msg.encode('utf-8', errors='replace'))
+                    process.stdin.flush()
+        finally:
+            stop_event.set()
+            try:
+                if process and process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=2)
+                    except Exception:
+                        process.kill()
+            except Exception:
+                pass
+            try:
+                ws.close()
+            except Exception:
+                pass
+
+    except Exception as e:
+        logger.error(f"WebSocket执行命令失败: {e}", exc_info=True)
+        try:
+            ws.send(f"\r\n[ERROR] {str(e)}\r\n")
+            ws.close()
+        except Exception:
+            pass
+
+
 # 在现有代码的基础上，添加以下内容：
 
 @app.route('/api/validate/data', methods=['GET'])
@@ -3380,6 +3537,28 @@ def authenticate_request():
     """认证请求"""
     token = request.headers.get('X-Auth-Token')
     return token == config.get('token')
+
+def authenticate_ws_request(ws) -> bool:
+    """认证WebSocket请求（支持query token与header）。"""
+    try:
+        expected = config.get('token')
+        env = ws.environ or {}
+        query = env.get('QUERY_STRING') or ''
+
+        token_from_query = None
+        for pair in query.split('&'):
+            if '=' not in pair:
+                continue
+            k, v = pair.split('=', 1)
+            if k in ('token', 'auth_token'):
+                token_from_query = unquote(v)
+                break
+
+        token_from_header = env.get('HTTP_X_AUTH_TOKEN')
+        token = token_from_query or token_from_header
+        return bool(token) and token == expected
+    except Exception:
+        return False
 
 def format_bytes(bytes_value: int) -> str:
     """格式化字节数为人类可读格式"""

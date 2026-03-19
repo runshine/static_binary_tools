@@ -2,6 +2,7 @@ flask
 requests
 flask
 flask-cors
+flask-sock
 pyyaml
 docker
 psutil
