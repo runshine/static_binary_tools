@@ -614,9 +614,157 @@ class ServiceManager:
         self.pull_timeout_sec = int(config.get('docker_compose_pull_timeout_sec', 300))
         self.up_timeout_sec = int(config.get('docker_compose_up_timeout_sec', 1200))
         self.db = DatabaseManager(config['database_file'])
+        self.runtime_operations: Dict[str, Dict[str, Any]] = {}
+        self.runtime_operations_lock = threading.Lock()
 
         # 创建服务目录
         self.compose_root.mkdir(parents=True, exist_ok=True)
+
+    def _get_runtime_operation(self, service_name: str) -> Dict[str, Any]:
+        with self.runtime_operations_lock:
+            data = self.runtime_operations.get(service_name, {}).copy()
+        if not data:
+            return {
+                'active': False,
+                'phase': 'idle',
+                'progress': 0,
+                'message': '',
+                'updated_at': datetime.now().isoformat()
+            }
+        return data
+
+    def _set_runtime_operation(
+        self,
+        service_name: str,
+        phase: str,
+        progress: int = 0,
+        message: str = '',
+        active: bool = True,
+        error: str = '',
+        detail: Optional[Dict[str, Any]] = None
+    ):
+        payload = {
+            'active': bool(active),
+            'phase': phase,
+            'progress': max(0, min(100, int(progress))),
+            'message': message,
+            'error': error,
+            'updated_at': datetime.now().isoformat(),
+            'detail': detail or {}
+        }
+        with self.runtime_operations_lock:
+            self.runtime_operations[service_name] = payload
+
+    def get_service_operation_status(self, service_name: str) -> Dict[str, Any]:
+        return self._get_runtime_operation(service_name)
+
+    def _run_pull_with_progress(self, service_name: str, compose_file: Path, project_name: str) -> Tuple[bool, str]:
+        """
+        执行 docker compose pull 并尽可能解析进度。
+        注：docker compose pull 在非TTY环境下进度信息有限，这里做“最佳努力”解析。
+        """
+        compose_data = self.parse_compose_file(compose_file) or {}
+        declared_services = compose_data.get('services') or {}
+        total_services = max(len(declared_services), 1)
+        completed_services = 0
+        seen_completed = set()
+
+        self._set_runtime_operation(
+            service_name,
+            phase='pulling',
+            progress=5,
+            message='开始拉取镜像',
+            active=True,
+            detail={'total_services': total_services, 'completed_services': 0}
+        )
+
+        cmd = [
+            self.docker_compose_bin,
+            '-f', str(compose_file),
+            '-p', project_name,
+            'pull'
+        ]
+
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=self.get_env_with_docker_host(),
+            bufsize=1
+        )
+
+        lines: List[str] = []
+        start_time = time.time()
+
+        while True:
+            if process.stdout is None:
+                break
+            line = process.stdout.readline()
+            if not line:
+                if process.poll() is not None:
+                    break
+                # 超时保护
+                if (time.time() - start_time) > self.pull_timeout_sec:
+                    process.kill()
+                    return False, f"pull超时({self.pull_timeout_sec}s)"
+                continue
+
+            line = line.rstrip('\n')
+            lines.append(line)
+            line_lower = line.lower()
+
+            # 解析服务级完成事件（Pulled / Image is up to date / Already exists）
+            # 常见格式： "<service> Pulled"
+            tokens = line.split()
+            if len(tokens) >= 2:
+                svc_candidate = tokens[0]
+                if (
+                    (' pulled' in line_lower)
+                    or ('up to date' in line_lower)
+                    or ('already exists' in line_lower)
+                ):
+                    if svc_candidate not in seen_completed:
+                        seen_completed.add(svc_candidate)
+                        completed_services += 1
+
+            progress = 5 + int(min(completed_services, total_services) * 75 / total_services)
+            self._set_runtime_operation(
+                service_name,
+                phase='pulling',
+                progress=progress,
+                message=line[-300:],
+                active=True,
+                detail={
+                    'total_services': total_services,
+                    'completed_services': min(completed_services, total_services),
+                    'last_output_line': line
+                }
+            )
+
+        rc = process.wait(timeout=5)
+        if rc == 0:
+            self._set_runtime_operation(
+                service_name,
+                phase='pulling',
+                progress=80,
+                message='镜像拉取完成',
+                active=True,
+                detail={'total_services': total_services, 'completed_services': min(completed_services, total_services)}
+            )
+            return True, "镜像拉取完成"
+
+        tail = '\n'.join(lines[-20:]).strip()
+        err_msg = tail or 'docker compose pull 执行失败'
+        self._set_runtime_operation(
+            service_name,
+            phase='failed',
+            progress=max(1, self._get_runtime_operation(service_name).get('progress', 1)),
+            message='镜像拉取失败',
+            active=False,
+            error=err_msg
+        )
+        return False, err_msg
 
     def get_env_with_docker_host(self):
         """获取包含DOCKER_HOST环境变量的环境变量字典"""
@@ -909,8 +1057,9 @@ class ServiceManager:
         """获取服务状态"""
         try:
             compose_file = self.get_compose_file(service_name)
+            operation = self.get_service_operation_status(service_name)
             if not compose_file.exists():
-                return {'status': 'not_found', 'containers': []}
+                return {'status': 'not_found', 'containers': [], 'operation': operation}
 
             # 获取项目名称（使用文件夹名）
             project_name = service_name
@@ -969,21 +1118,33 @@ class ServiceManager:
                 if total_count == 0:
                     status = 'stopped'
 
+                if operation.get('active'):
+                    status = str(operation.get('phase') or status)
+
                 return {
                     'status': status,
                     'containers': containers,
                     'running': running_count,
-                    'total': total_count
+                    'total': total_count,
+                    'operation': operation
                 }
             else:
                 # 命令执行失败，检查是否是服务未运行
                 if "no such service" in result.stderr.lower() or "no configuration" in result.stderr.lower():
-                    return {'status': 'stopped', 'containers': []}
-                return {'status': 'unknown', 'containers': []}
+                    fallback_status = 'stopped'
+                else:
+                    fallback_status = 'unknown'
+                if operation.get('active'):
+                    fallback_status = str(operation.get('phase') or fallback_status)
+                return {'status': fallback_status, 'containers': [], 'operation': operation}
 
         except Exception as e:
             logger.error(f"获取服务状态失败: {e}")
-            return {'status': 'error', 'error': str(e)}
+            operation = self.get_service_operation_status(service_name)
+            status = 'error'
+            if operation.get('active'):
+                status = str(operation.get('phase') or status)
+            return {'status': status, 'error': str(e), 'operation': operation}
 
     def start_service(self, service_name: str) -> Tuple[bool, str]:
         """启动服务"""
@@ -992,30 +1153,28 @@ class ServiceManager:
             if not compose_file.exists():
                 return False, f"服务 {service_name} 不存在"
 
+            self._set_runtime_operation(service_name, 'starting', 1, '准备启动服务', active=True)
+
             # 检查服务状态
             status_info = self.get_service_status(service_name)
             if status_info['status'] == 'running':
+                self._set_runtime_operation(service_name, 'running', 100, '服务已在运行', active=False)
                 return True, "服务已在运行"
 
             # 获取项目名称
             project_name = service_name
 
-            # 执行docker-compose pull
-            cmd = [
-                self.docker_compose_bin,
-                '-f', str(compose_file),
-                '-p', project_name,
-                'pull'
-            ]
-            subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                env=self.get_env_with_docker_host(),
-                timeout=self.pull_timeout_sec
-            )
+            # 执行docker-compose pull（带进度）
+            pull_ok, pull_msg = self._run_pull_with_progress(service_name, compose_file, project_name)
+            if not pull_ok:
+                self.db.execute_query(
+                    "UPDATE services SET status = 'error', updated_at = CURRENT_TIMESTAMP WHERE name = ?",
+                    (service_name,)
+                )
+                return False, f"拉取镜像失败: {pull_msg}"
 
             # 执行docker-compose up -d
+            self._set_runtime_operation(service_name, 'starting', 85, '镜像拉取完成，启动容器中', active=True)
             cmd = [
                 self.docker_compose_bin,
                 '-f', str(compose_file),
@@ -1039,18 +1198,34 @@ class ServiceManager:
                     "UPDATE services SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE name = ?",
                     (service_name,)
                 )
+                self._set_runtime_operation(service_name, 'running', 100, '服务启动成功', active=False)
                 return True, "服务启动成功"
             else:
                 detail = (result.stderr or result.stdout or '').strip()
+                self.db.execute_query(
+                    "UPDATE services SET status = 'error', updated_at = CURRENT_TIMESTAMP WHERE name = ?",
+                    (service_name,)
+                )
+                self._set_runtime_operation(service_name, 'failed', 95, '服务启动失败', active=False, error=detail)
                 return False, f"启动失败: {detail}"
 
         except subprocess.TimeoutExpired as e:
             cmd = ' '.join(e.cmd) if isinstance(e.cmd, list) else str(e.cmd)
             timeout_sec = int(e.timeout or 0)
+            self.db.execute_query(
+                "UPDATE services SET status = 'error', updated_at = CURRENT_TIMESTAMP WHERE name = ?",
+                (service_name,)
+            )
+            self._set_runtime_operation(service_name, 'failed', 95, f"启动超时({timeout_sec}s)", active=False, error=cmd)
             return False, f"启动超时({timeout_sec}s): {cmd}"
 
         except Exception as e:
             logger.error(f"启动服务失败: {e}")
+            self.db.execute_query(
+                "UPDATE services SET status = 'error', updated_at = CURRENT_TIMESTAMP WHERE name = ?",
+                (service_name,)
+            )
+            self._set_runtime_operation(service_name, 'failed', 95, '启动失败', active=False, error=str(e))
             return False, f"启动失败: {str(e)}"
 
     def stop_service(self, service_name: str) -> Tuple[bool, str]:
@@ -1059,6 +1234,8 @@ class ServiceManager:
             compose_file = self.get_compose_file(service_name)
             if not compose_file.exists():
                 return False, f"服务 {service_name} 不存在"
+
+            self._set_runtime_operation(service_name, 'stopping', 10, '正在停止服务', active=True)
 
             # 获取项目名称
             project_name = service_name
@@ -1084,20 +1261,26 @@ class ServiceManager:
                     "UPDATE services SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE name = ?",
                     (service_name,)
                 )
+                self._set_runtime_operation(service_name, 'stopped', 100, '服务停止成功', active=False)
                 return True, "服务停止成功"
             else:
-                return False, f"停止失败: {result.stderr}"
+                detail = (result.stderr or result.stdout or '').strip()
+                self._set_runtime_operation(service_name, 'failed', 95, '服务停止失败', active=False, error=detail)
+                return False, f"停止失败: {detail}"
 
         except Exception as e:
             logger.error(f"停止服务失败: {e}")
+            self._set_runtime_operation(service_name, 'failed', 95, '停止失败', active=False, error=str(e))
             return False, f"停止失败: {str(e)}"
 
     def restart_service(self, service_name: str) -> Tuple[bool, str]:
         """重启服务"""
+        self._set_runtime_operation(service_name, 'restarting', 1, '准备重启服务', active=True)
         success, message = self.stop_service(service_name)
         if success:
             time.sleep(2)  # 等待2秒
             return self.start_service(service_name)
+        self._set_runtime_operation(service_name, 'failed', 95, '重启失败', active=False, error=message)
         return False, message
 
     def create_service_from_yaml(self, service_name: str, yaml_content: str) -> Tuple[bool, str]:
@@ -2442,6 +2625,30 @@ def get_service(service_name):
         return jsonify(service_dict)
     except Exception as e:
         logger.error(f"获取服务详情失败: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/services/<service_name>/operation-status', methods=['GET'])
+def get_service_operation_status(service_name):
+    """获取服务操作中间状态与进度"""
+    if not authenticate_request():
+        return jsonify({'error': '认证失败'}), 401
+
+    try:
+        service = db_conn.execute(
+            "SELECT id, name FROM services WHERE name = ?",
+            (service_name,)
+        ).fetchone()
+
+        if not service:
+            return jsonify({'error': '服务不存在'}), 404
+
+        op = service_manager.get_service_operation_status(service_name)
+        return jsonify({
+            'service_name': service_name,
+            'operation': op
+        })
+    except Exception as e:
+        logger.error(f"获取服务操作状态失败: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/services/yaml', methods=['POST'])
