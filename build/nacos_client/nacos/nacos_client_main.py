@@ -16,6 +16,7 @@ import tempfile
 import zipfile
 import tarfile
 import shutil
+import shlex
 import time
 import uuid
 import hashlib
@@ -1766,16 +1767,23 @@ class ServiceManager:
                 else:
                     exec_cmd = ['sh', '-lc', requested_shell]
 
-                cmd = [
+                base_cmd = [
                     self.docker_compose_bin,
                     '-f', str(compose_file),
                     '-p', project_name,
                     'exec',
-                    '-T',
                 ]
                 if user:
-                    cmd.extend(['-u', user])
-                cmd.extend([resolved_container, *exec_cmd])
+                    base_cmd.extend(['-u', user])
+
+                # 终端 shell 需要真正的 TTY 才会有提示符、回显和行编辑能力。
+                # 优先通过 `script` 包装 docker compose exec，为浏览器 WS 提供可交互的 PTY。
+                script_bin = shutil.which('script')
+                if script_bin:
+                    interactive_cmd = [*base_cmd, resolved_container, *exec_cmd]
+                    cmd = [script_bin, '-qfec', shlex.join(interactive_cmd), '/dev/null']
+                else:
+                    cmd = [*base_cmd, '-T', resolved_container, *exec_cmd]
 
             proc = subprocess.Popen(
                 cmd,
