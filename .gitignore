@@ -1,0 +1,5 @@
+.idea/
+build/gdb/install/
+build/nacos_client/nacos/__pycache__/
+build/nacos_client/nacos/nacos_client.db
+build/nacos_client/package-lock.json
