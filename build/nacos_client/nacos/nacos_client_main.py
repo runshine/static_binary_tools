@@ -573,6 +573,8 @@ class DatabaseManager:
                                                                name TEXT UNIQUE NOT NULL,
                                                                path TEXT NOT NULL,
                                                                project_name TEXT,
+                                                               template_id INTEGER,
+                                                               template_name TEXT,
                                                                enabled INTEGER DEFAULT 1,
                                                                status TEXT DEFAULT 'stopped',
                                                                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -584,6 +586,10 @@ class DatabaseManager:
         existing_columns = {row[1] for row in cursor.fetchall()}
         if 'project_name' not in existing_columns:
             cursor.execute("ALTER TABLE services ADD COLUMN project_name TEXT")
+        if 'template_id' not in existing_columns:
+            cursor.execute("ALTER TABLE services ADD COLUMN template_id INTEGER")
+        if 'template_name' not in existing_columns:
+            cursor.execute("ALTER TABLE services ADD COLUMN template_name TEXT")
 
         # 创建配置表
         cursor.execute('''
@@ -1358,7 +1364,13 @@ class ServiceManager:
         self._set_runtime_operation(service_name, 'failed', 95, '重启失败', active=False, error=message)
         return False, message
 
-    def create_service_from_yaml(self, service_name: str, yaml_content: str) -> Tuple[bool, str]:
+    def create_service_from_yaml(
+        self,
+        service_name: str,
+        yaml_content: str,
+        template_name: str = '',
+        template_id: Optional[int] = None
+    ) -> Tuple[bool, str]:
         """从YAML创建服务"""
         service_path = None
         try:
@@ -1397,8 +1409,9 @@ class ServiceManager:
 
             # 插入数据库记录
             self.db.execute_query(
-                "INSERT INTO services (name, path, project_name, status) VALUES (?, ?, ?, 'stopped')",
-                (service_name, str(service_path), project_name)
+                "INSERT INTO services (name, path, project_name, template_id, template_name, status) "
+                "VALUES (?, ?, ?, ?, ?, 'stopped')",
+                (service_name, str(service_path), project_name, template_id, str(template_name or '').strip())
             )
 
             logger.info(f"服务 {service_name} 创建成功")
@@ -1415,7 +1428,13 @@ class ServiceManager:
                 shutil.rmtree(service_path, ignore_errors=True)
             return False, f"创建失败: {str(e)}"
 
-    def create_service_from_zip(self, service_name: str, zip_file_path: str) -> Tuple[bool, str]:
+    def create_service_from_zip(
+        self,
+        service_name: str,
+        zip_file_path: str,
+        template_name: str = '',
+        template_id: Optional[int] = None
+    ) -> Tuple[bool, str]:
         """从压缩包创建服务（支持多种格式）"""
         temp_dir = None
         service_path = None
@@ -1527,8 +1546,9 @@ class ServiceManager:
 
             # 插入数据库记录
             self.db.execute_query(
-                "INSERT INTO services (name, path, project_name, status) VALUES (?, ?, ?, 'stopped')",
-                (service_name, str(service_path), project_name)
+                "INSERT INTO services (name, path, project_name, template_id, template_name, status) "
+                "VALUES (?, ?, ?, ?, ?, 'stopped')",
+                (service_name, str(service_path), project_name, template_id, str(template_name or '').strip())
             )
 
             logger.info(f"服务 {service_name} 从压缩包创建成功，格式: {file_ext}")
@@ -2740,7 +2760,8 @@ def list_services():
 
     try:
         services = db_conn.execute(
-            "SELECT id, name, path, enabled, status, created_at, updated_at FROM services ORDER BY name"
+            "SELECT id, name, path, project_name, template_id, template_name, enabled, status, created_at, updated_at "
+            "FROM services ORDER BY name"
         ).fetchall()
 
         result = []
@@ -2764,7 +2785,8 @@ def get_service(service_name):
 
     try:
         service = db_conn.execute(
-            "SELECT id, name, path, enabled, status, created_at, updated_at FROM services WHERE name = ?",
+            "SELECT id, name, path, project_name, template_id, template_name, enabled, status, created_at, updated_at "
+            "FROM services WHERE name = ?",
             (service_name,)
         ).fetchone()
 
@@ -2824,11 +2846,22 @@ def create_service_from_yaml():
 
         service_name = data.get('name')
         yaml_content = data.get('yaml')
+        template_name = str(data.get('template_name') or '').strip()
+        template_id = data.get('template_id')
+        try:
+            template_id = int(template_id) if template_id not in (None, '', []) else None
+        except (TypeError, ValueError):
+            template_id = None
 
         if not service_name or not yaml_content:
             return jsonify({'error': '服务名称和YAML内容不能为空'}), 400
 
-        success, message = service_manager.create_service_from_yaml(service_name, yaml_content)
+        success, message = service_manager.create_service_from_yaml(
+            service_name,
+            yaml_content,
+            template_name=template_name,
+            template_id=template_id
+        )
 
         if success:
             return jsonify({'message': message}), 201
@@ -2850,6 +2883,12 @@ def create_service_from_zip():
 
         file = request.files['file']
         service_name = request.form.get('name')
+        template_name = str(request.form.get('template_name') or '').strip()
+        template_id = request.form.get('template_id')
+        try:
+            template_id = int(template_id) if template_id not in (None, '', []) else None
+        except (TypeError, ValueError):
+            template_id = None
 
         if not service_name:
             return jsonify({'error': '服务名称不能为空'}), 400
@@ -2868,7 +2907,12 @@ def create_service_from_zip():
         file.save(str(archive_path))
 
         # 调用方法来处理压缩包（支持多种格式）
-        success, message = service_manager.create_service_from_zip(service_name, str(archive_path))
+        success, message = service_manager.create_service_from_zip(
+            service_name,
+            str(archive_path),
+            template_name=template_name,
+            template_id=template_id
+        )
 
         # 清理临时文件
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -3828,7 +3872,7 @@ class AgentServiceReporter:
 
     def _collect_services_snapshot(self) -> List[Dict[str, Any]]:
         services = db_conn.execute(
-            "SELECT name, status FROM services ORDER BY name"
+            "SELECT name, status, project_name, template_id, template_name FROM services ORDER BY name"
         ).fetchall()
 
         snapshot: List[Dict[str, Any]] = []
@@ -3863,7 +3907,10 @@ class AgentServiceReporter:
                 'name': service_name,
                 'status': str(service_status or 'unknown'),
                 'image': image,
-                'ports': ports
+                'ports': ports,
+                'project_name': str(row['project_name'] or '').strip(),
+                'template_id': row['template_id'],
+                'template_name': str(row['template_name'] or '').strip()
             })
 
         return snapshot
