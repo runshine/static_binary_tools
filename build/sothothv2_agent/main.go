@@ -1,17 +1,23 @@
 package main
 
 import (
+	"archive/tar"
 	"compress/gzip"
+	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -117,6 +123,7 @@ var (
 	serviceMutex  sync.RWMutex
 	logger        *log.Logger
 	cronScheduler *cron.Cron
+	httpClient    = &http.Client{Timeout: 60 * time.Second}
 
 	// 关闭控制
 	serviceStartOrder []string       // 服务启动顺序
@@ -128,13 +135,61 @@ var (
 	// 新增：进程互斥锁相关
 	lockFile     *os.File
 	lockFilePath string
+
+	// 自身更新控制
+	selfUpdateMutex           sync.Mutex
+	selfUpdateInProgress      bool
+	adoptExistingServicesOnce bool
 )
 
 const (
 	DefaultCheckInterval = 10
 	DefaultMaxFailures   = 6
 	ServiceStopTimeout   = 10 * time.Second // 服务停止超时时间
+	selfPackageName      = "sothothv2_agent"
 )
+
+var (
+	errUpdateAlreadyRunning = errors.New("self update already in progress")
+	errNoNewVersion         = errors.New("no newer version available")
+)
+
+type PackageSearchResult struct {
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Version          string `json:"version"`
+	System           string `json:"system"`
+	Architecture     string `json:"architecture"`
+	OriginalFilename string `json:"original_filename"`
+	TotalSize        int64  `json:"total_size"`
+	UploadTime       string `json:"upload_time"`
+	CheckStatus      string `json:"check_status"`
+	DownloadCount    int    `json:"download_count"`
+}
+
+type PackageSearchResponse struct {
+	Success  bool                  `json:"success"`
+	Error    string                `json:"error"`
+	Count    int                   `json:"count"`
+	Packages []PackageSearchResult `json:"packages"`
+}
+
+type SelfUpdateCheckResult struct {
+	PackageName       string               `json:"package_name"`
+	Upstream          string               `json:"upstream"`
+	System            string               `json:"system"`
+	Architecture      string               `json:"architecture"`
+	CurrentVersion    string               `json:"current_version"`
+	CurrentSemver     string               `json:"current_semver"`
+	CurrentBuild      string               `json:"current_build"`
+	ExecutablePath    string               `json:"executable_path"`
+	UpdateInProgress  bool                 `json:"update_in_progress"`
+	HasUpdate         bool                 `json:"has_update"`
+	LatestPackage     *PackageSearchResult `json:"latest_package,omitempty"`
+	LatestSemver      string               `json:"latest_semver,omitempty"`
+	LatestBuild       string               `json:"latest_build,omitempty"`
+	DownloadURL       string               `json:"download_url,omitempty"`
+}
 
 func shortCommit() string {
 	commit := strings.TrimSpace(GitCommit)
@@ -195,6 +250,7 @@ func init() {
 
 	// 初始化信号通道
 	signalChan = make(chan os.Signal, 1)
+	adoptExistingServicesOnce = os.Getenv("SOTHOTHV2_ADOPT_EXISTING_SERVICES") == "1"
 }
 
 func main() {
@@ -261,6 +317,9 @@ func main() {
 	logger.Printf("Server: %s:%s", monitorConfig.ServerAddr, monitorConfig.ServerPort)
 	logger.Printf("Signal handler installed. Send SIGINT or SIGTERM for graceful shutdown.")
 	logger.Printf("Service stop timeout: %v", ServiceStopTimeout)
+	if adoptExistingServicesOnce {
+		logger.Printf("Startup mode: adopt existing services from PID files")
+	}
 
 	// 初始化服务
 	services = make(map[string]*ServiceStatus)
@@ -1094,10 +1153,141 @@ func validateWorkspaceForUninstall(workspacePath string) error {
 	return nil
 }
 
+func findSystemdUnitPath() string {
+	candidates := []string{
+		"/usr/lib/systemd/system/sothothv2.service",
+		"/etc/systemd/system/sothothv2.service",
+	}
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return candidates[0]
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func writeControlHelperScript(workspacePath string, currentPID int, removeWorkspace bool) (string, error) {
+	prefix := "sothothv2-stop-*.sh"
+	if removeWorkspace {
+		prefix = "sothothv2-uninstall-*.sh"
+	}
+	scriptFile, err := os.CreateTemp("", prefix)
+	if err != nil {
+		return "", fmt.Errorf("failed to create control helper: %w", err)
+	}
+	defer scriptFile.Close()
+
+	unitPath := findSystemdUnitPath()
+	unitName := filepath.Base(unitPath)
+	logName := "sothothv2-stop.log"
+	if removeWorkspace {
+		logName = "sothothv2-uninstall.log"
+	}
+	logPath := filepath.Join(os.TempDir(), logName)
+
+	removeWorkspaceSection := ""
+	if removeWorkspace {
+		removeWorkspaceSection = `
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  rm -rf "$WORKSPACE" && break || true
+  sleep 1
+done
+
+if [ -d "$WORKSPACE" ]; then
+  find "$WORKSPACE" -mindepth 1 -exec rm -rf {} + 2>/dev/null || true
+  rmdir "$WORKSPACE" 2>/dev/null || true
+fi
+
+if [ -e "$WORKSPACE" ]; then
+  echo "$(date -Is) [control] workspace still exists: $WORKSPACE"
+  exit 1
+fi
+
+echo "$(date -Is) [control] workspace removed successfully"
+`
+	}
+
+	scriptContent := fmt.Sprintf(`#!/bin/sh
+set -eu
+
+WORKSPACE=%s
+UNIT_PATH=%s
+UNIT_NAME=%s
+CURRENT_PID=%d
+LOG_FILE=%s
+
+exec >>"$LOG_FILE" 2>&1
+echo "$(date -Is) [uninstall] helper started for workspace: $WORKSPACE"
+
+cd /
+
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl stop "$UNIT_NAME" || true
+fi
+
+kill -TERM "$CURRENT_PID" 2>/dev/null || true
+sleep 1
+pkill -TERM -f "$WORKSPACE/bin/sothothv2_agent" 2>/dev/null || true
+sleep 1
+pkill -KILL -f "$WORKSPACE/bin/sothothv2_agent" 2>/dev/null || true
+
+`, shellQuote(workspacePath), shellQuote(unitPath), shellQuote(unitName), currentPID, shellQuote(logPath))
+
+	if removeWorkspace {
+		scriptContent += `
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl disable "$UNIT_NAME" || true
+fi
+
+rm -f "$UNIT_PATH" /etc/systemd/system/"$UNIT_NAME" /etc/systemd/system/multi-user.target.wants/"$UNIT_NAME" 2>/dev/null || true
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload || true
+  systemctl reset-failed "$UNIT_NAME" || true
+fi
+
+`
+	}
+
+	scriptContent += removeWorkspaceSection + `
+rm -f "$0"
+`
+
+	if _, err := scriptFile.WriteString(scriptContent); err != nil {
+		return "", fmt.Errorf("failed to write control helper: %w", err)
+	}
+	if err := scriptFile.Chmod(0700); err != nil {
+		return "", fmt.Errorf("failed to chmod control helper: %w", err)
+	}
+	return scriptFile.Name(), nil
+}
+
+func launchDetachedUninstallHelper(scriptPath string) error {
+	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err != nil {
+		return fmt.Errorf("failed to open /dev/null: %w", err)
+	}
+	defer devNull.Close()
+
+	cmd := exec.Command("/bin/sh", scriptPath)
+	cmd.Dir = "/"
+	cmd.Stdin = devNull
+	cmd.Stdout = devNull
+	cmd.Stderr = devNull
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start uninstall helper: %w", err)
+	}
+	return nil
+}
+
 // performUninstall 执行卸载流程：
 // 1) 停止所有服务（优先执行每个服务的stop_cmd）；
-// 2) 删除workspace（带安全校验）；
-// 3) 退出Agent自身。
+// 2) 生成外部 helper 停止 systemd/自身进程并删除 workspace；
+// 3) 清理 systemd unit / 自动启动链接，不遗留部署痕迹。
 func performUninstall(workspacePath string) error {
 	if err := validateWorkspaceForUninstall(workspacePath); err != nil {
 		return err
@@ -1127,15 +1317,559 @@ func performUninstall(workspacePath string) error {
 	// 先释放锁文件，避免占用 workspace 下路径影响删除
 	releaseProcessLock()
 
-	logger.Printf("Removing workspace: %s", workspacePath)
-	if err := os.RemoveAll(workspacePath); err != nil {
-		return fmt.Errorf("failed to remove workspace: %w", err)
+	helperPath, err := writeControlHelperScript(workspacePath, os.Getpid(), true)
+	if err != nil {
+		return err
 	}
-	logger.Printf("Workspace removed: %s", workspacePath)
+	logger.Printf("Uninstall helper created: %s", helperPath)
 
-	logger.Println("Uninstall finished, agent exiting now")
-	time.Sleep(300 * time.Millisecond)
-	os.Exit(0)
+	if err := launchDetachedUninstallHelper(helperPath); err != nil {
+		return err
+	}
+
+	logger.Println("Uninstall helper started, waiting for external cleanup")
+	time.Sleep(500 * time.Millisecond)
+	return nil
+}
+
+// performStop 停止所有子服务和 Agent 自身，但不删除 workspace / 部署文件。
+func performStop() error {
+	workspacePath := strings.TrimSpace(monitorConfig.Workspace)
+	if workspacePath == "" {
+		return fmt.Errorf("workspace is empty")
+	}
+
+	shutdownMutex.Lock()
+	if isShuttingDown {
+		shutdownMutex.Unlock()
+		return fmt.Errorf("shutdown/stop already in progress")
+	}
+	isShuttingDown = true
+	shutdownMutex.Unlock()
+
+	start := time.Now()
+	logger.Println("========== Starting Agent Stop ==========")
+
+	stopMonitorCron()
+	stopAllServices()
+	shutdownWG.Wait()
+	printShutdownStatistics(start)
+
+	if monitorConfig.EnableCgroup {
+		cleanupCgroup()
+	}
+
+	releaseProcessLock()
+
+	helperPath, err := writeControlHelperScript(workspacePath, os.Getpid(), false)
+	if err != nil {
+		return err
+	}
+	logger.Printf("Stop helper created: %s", helperPath)
+
+	if err := launchDetachedUninstallHelper(helperPath); err != nil {
+		return err
+	}
+
+	logger.Println("Stop helper started, waiting for external shutdown")
+	time.Sleep(500 * time.Millisecond)
+	return nil
+}
+
+func currentPackageVersion() string {
+	version := strings.TrimSpace(Version)
+	build := strings.TrimSpace(BuildVersion)
+	if version == "" {
+		version = "v0.1.0"
+	}
+	if build == "" || build == "dev" {
+		return version
+	}
+	return fmt.Sprintf("%s-%s", version, build)
+}
+
+func parsePackageVersion(version string) (string, string) {
+	value := strings.TrimSpace(version)
+	if value == "" {
+		return "", ""
+	}
+	idx := strings.LastIndex(value, "-")
+	if idx <= 0 || idx >= len(value)-1 {
+		return value, ""
+	}
+	return value[:idx], value[idx+1:]
+}
+
+func compareSemver(a, b string) int {
+	normalize := func(value string) []int {
+		value = strings.TrimSpace(strings.TrimPrefix(value, "v"))
+		parts := strings.Split(value, ".")
+		result := make([]int, 0, len(parts))
+		for _, part := range parts {
+			n, err := strconv.Atoi(part)
+			if err != nil {
+				n = 0
+			}
+			result = append(result, n)
+		}
+		return result
+	}
+	aa := normalize(a)
+	bb := normalize(b)
+	maxLen := len(aa)
+	if len(bb) > maxLen {
+		maxLen = len(bb)
+	}
+	for len(aa) < maxLen {
+		aa = append(aa, 0)
+	}
+	for len(bb) < maxLen {
+		bb = append(bb, 0)
+	}
+	for i := 0; i < maxLen; i++ {
+		switch {
+		case aa[i] > bb[i]:
+			return 1
+		case aa[i] < bb[i]:
+			return -1
+		}
+	}
+	return 0
+}
+
+func isRemoteVersionNewer(remoteVersion string) bool {
+	remoteSemver, remoteBuild := parsePackageVersion(remoteVersion)
+	currentSemver := strings.TrimSpace(Version)
+	currentBuild := strings.TrimSpace(BuildVersion)
+
+	if remoteSemver != "" {
+		if cmp := compareSemver(remoteSemver, currentSemver); cmp > 0 {
+			return true
+		} else if cmp < 0 {
+			return false
+		}
+	}
+	if remoteBuild == "" {
+		return false
+	}
+	if currentBuild == "" || currentBuild == "dev" {
+		return true
+	}
+	return remoteBuild > currentBuild
+}
+
+func detectPackageArchitecture() (string, error) {
+	out, err := exec.Command("uname", "-m").Output()
+	if err != nil {
+		switch runtime.GOARCH {
+		case "amd64":
+			return "x86_64", nil
+		case "arm64":
+			return "aarch64", nil
+		case "riscv64":
+			return "riscv64", nil
+		case "arm":
+			return "armhf", nil
+		default:
+			return "", fmt.Errorf("unsupported architecture: %s", runtime.GOARCH)
+		}
+	}
+	switch arch := strings.TrimSpace(string(out)); arch {
+	case "x86_64", "amd64":
+		return "x86_64", nil
+	case "aarch64", "arm64":
+		return "aarch64", nil
+	case "armv7l", "armv7":
+		return "armhf", nil
+	case "armv6l", "armv6":
+		return "armel", nil
+	case "riscv64":
+		return "riscv64", nil
+	default:
+		return "", fmt.Errorf("unsupported architecture: %s", arch)
+	}
+}
+
+func resolveUpstreamBaseURL() (string, error) {
+	addr := strings.TrimSpace(monitorConfig.ServerAddr)
+	port := strings.TrimSpace(monitorConfig.ServerPort)
+	if addr == "" {
+		return "", fmt.Errorf("server_addr is empty")
+	}
+
+	if strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
+		u, err := url.Parse(addr)
+		if err != nil {
+			return "", err
+		}
+		if u.Port() == "" && port != "" {
+			host := u.Hostname()
+			if host == "" {
+				host = u.Host
+			}
+			u.Host = fmt.Sprintf("%s:%s", host, port)
+		}
+		return strings.TrimRight(u.String(), "/"), nil
+	}
+
+	if port != "" {
+		return fmt.Sprintf("http://%s:%s", addr, port), nil
+	}
+	return fmt.Sprintf("http://%s", addr), nil
+}
+
+func latestPackageDownloadURL(baseURL, systemName, architecture string) string {
+	return fmt.Sprintf(
+		"%s/api/packages/download/latest?system=%s&architecture=%s&name=%s",
+		strings.TrimRight(baseURL, "/"),
+		url.QueryEscape(systemName),
+		url.QueryEscape(architecture),
+		url.QueryEscape(selfPackageName),
+	)
+}
+
+func fetchLatestSelfPackage() (*PackageSearchResult, string, string, error) {
+	baseURL, err := resolveUpstreamBaseURL()
+	if err != nil {
+		return nil, "", "", err
+	}
+	arch, err := detectPackageArchitecture()
+	if err != nil {
+		return nil, "", "", err
+	}
+
+	searchURL := fmt.Sprintf(
+		"%s/api/packages/search?name=%s&architecture=%s",
+		strings.TrimRight(baseURL, "/"),
+		url.QueryEscape(selfPackageName),
+		url.QueryEscape(arch),
+	)
+
+	req, err := http.NewRequest(http.MethodGet, searchURL, nil)
+	if err != nil {
+		return nil, "", "", err
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, "", "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, "", "", fmt.Errorf("package search failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var payload PackageSearchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, "", "", err
+	}
+	if !payload.Success {
+		if payload.Error == "" {
+			payload.Error = "unknown upstream error"
+		}
+		return nil, "", "", fmt.Errorf("package search failed: %s", payload.Error)
+	}
+
+	var candidates []PackageSearchResult
+	for _, pkg := range payload.Packages {
+		if pkg.Name == selfPackageName && pkg.System == runtime.GOOS && pkg.Architecture == arch {
+			candidates = append(candidates, pkg)
+		}
+	}
+	if len(candidates) == 0 {
+		return nil, "", "", fmt.Errorf("no package found for %s/%s", runtime.GOOS, arch)
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		ti, errI := time.Parse(time.RFC3339, candidates[i].UploadTime)
+		tj, errJ := time.Parse(time.RFC3339, candidates[j].UploadTime)
+		if errI == nil && errJ == nil {
+			return ti.After(tj)
+		}
+		return candidates[i].Version > candidates[j].Version
+	})
+
+	return &candidates[0], baseURL, arch, nil
+}
+
+func buildSelfUpdateCheck() (*SelfUpdateCheckResult, error) {
+	exePath, _ := os.Executable()
+	upstream, err := resolveUpstreamBaseURL()
+	if err != nil {
+		return nil, err
+	}
+	arch, err := detectPackageArchitecture()
+	if err != nil {
+		return nil, err
+	}
+
+	selfUpdateMutex.Lock()
+	inProgress := selfUpdateInProgress
+	selfUpdateMutex.Unlock()
+
+	result := &SelfUpdateCheckResult{
+		PackageName:      selfPackageName,
+		Upstream:         upstream,
+		System:           runtime.GOOS,
+		Architecture:     arch,
+		CurrentVersion:   currentPackageVersion(),
+		CurrentSemver:    strings.TrimSpace(Version),
+		CurrentBuild:     strings.TrimSpace(BuildVersion),
+		ExecutablePath:   exePath,
+		UpdateInProgress: inProgress,
+		DownloadURL:      latestPackageDownloadURL(upstream, runtime.GOOS, arch),
+	}
+
+	latest, _, _, err := fetchLatestSelfPackage()
+	if err != nil {
+		return result, err
+	}
+	result.LatestPackage = latest
+	result.LatestSemver, result.LatestBuild = parsePackageVersion(latest.Version)
+	result.HasUpdate = isRemoteVersionNewer(latest.Version)
+	return result, nil
+}
+
+func downloadFileToTemp(downloadURL, pattern string) (string, error) {
+	tmpFile, err := os.CreateTemp("", pattern)
+	if err != nil {
+		return "", err
+	}
+	tmpPath := tmpFile.Name()
+	defer tmpFile.Close()
+
+	resp, err := httpClient.Get(downloadURL)
+	if err != nil {
+		os.Remove(tmpPath)
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		os.Remove(tmpPath)
+		return "", fmt.Errorf("download failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+		os.Remove(tmpPath)
+		return "", err
+	}
+	return tmpPath, nil
+}
+
+func extractSelfBinaryFromArchive(archivePath string) (string, error) {
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	gzipReader, err := gzip.NewReader(file)
+	if err != nil {
+		return "", err
+	}
+	defer gzipReader.Close()
+
+	tarReader := tar.NewReader(gzipReader)
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", err
+		}
+		if header.Typeflag != tar.TypeReg {
+			continue
+		}
+		if filepath.Base(header.Name) != "sothothv2_agent" {
+			continue
+		}
+
+		tmpFile, err := os.CreateTemp("", "sothothv2_agent-bin-*")
+		if err != nil {
+			return "", err
+		}
+		tmpPath := tmpFile.Name()
+		if _, err := io.Copy(tmpFile, tarReader); err != nil {
+			tmpFile.Close()
+			os.Remove(tmpPath)
+			return "", err
+		}
+		if err := tmpFile.Close(); err != nil {
+			os.Remove(tmpPath)
+			return "", err
+		}
+		if err := os.Chmod(tmpPath, 0755); err != nil {
+			os.Remove(tmpPath)
+			return "", err
+		}
+		return tmpPath, nil
+	}
+
+	return "", fmt.Errorf("binary sothothv2_agent not found in archive")
+}
+
+func replaceCurrentBinary(extractedBinary string) (string, error) {
+	exePath, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	targetDir := filepath.Dir(exePath)
+	stagedFile, err := os.CreateTemp(targetDir, "sothothv2_agent.new.*")
+	if err != nil {
+		return "", err
+	}
+	stagedPath := stagedFile.Name()
+
+	src, err := os.Open(extractedBinary)
+	if err != nil {
+		stagedFile.Close()
+		os.Remove(stagedPath)
+		return "", err
+	}
+	defer src.Close()
+
+	if _, err := io.Copy(stagedFile, src); err != nil {
+		stagedFile.Close()
+		os.Remove(stagedPath)
+		return "", err
+	}
+	if err := stagedFile.Chmod(0755); err != nil {
+		stagedFile.Close()
+		os.Remove(stagedPath)
+		return "", err
+	}
+	if err := stagedFile.Sync(); err != nil {
+		stagedFile.Close()
+		os.Remove(stagedPath)
+		return "", err
+	}
+	if err := stagedFile.Close(); err != nil {
+		os.Remove(stagedPath)
+		return "", err
+	}
+	if err := os.Rename(stagedPath, exePath); err != nil {
+		os.Remove(stagedPath)
+		return "", err
+	}
+	return exePath, nil
+}
+
+func tryAdoptExistingProcess(status *ServiceStatus) (bool, error) {
+	pidFile := strings.TrimSpace(status.Service.PIDFile)
+	if pidFile == "" {
+		return false, nil
+	}
+	if _, err := os.Stat(pidFile); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	data, err := ioutil.ReadFile(pidFile)
+	if err != nil {
+		return false, err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		return false, nil
+	}
+	if !isProcessRunning(pid) {
+		return false, nil
+	}
+
+	status.PID = pid
+	status.Process, _ = os.FindProcess(pid)
+	status.Cmd = nil
+	status.IsRunning = true
+	status.LastCheck = time.Now()
+	if status.StartTime.IsZero() {
+		status.StartTime = time.Now()
+	}
+	logger.Printf("[%s] Adopted existing process from PID file: %d", status.Service.Name, pid)
+	return true, nil
+}
+
+func prepareForSelfReexec() error {
+	shutdownMutex.Lock()
+	if isShuttingDown {
+		shutdownMutex.Unlock()
+		return fmt.Errorf("shutdown already in progress")
+	}
+	isShuttingDown = true
+	shutdownMutex.Unlock()
+
+	stopMonitorCron()
+	if apiServer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := apiServer.Shutdown(ctx); err != nil {
+			logger.Printf("API shutdown during self-update returned error: %v", err)
+		}
+	}
+	return nil
+}
+
+func performSelfUpdate(force bool) error {
+	selfUpdateMutex.Lock()
+	if selfUpdateInProgress {
+		selfUpdateMutex.Unlock()
+		return errUpdateAlreadyRunning
+	}
+	selfUpdateInProgress = true
+	selfUpdateMutex.Unlock()
+	defer func() {
+		selfUpdateMutex.Lock()
+		selfUpdateInProgress = false
+		selfUpdateMutex.Unlock()
+	}()
+
+	check, err := buildSelfUpdateCheck()
+	if err != nil {
+		return err
+	}
+	if !check.HasUpdate && !force {
+		return errNoNewVersion
+	}
+
+	archivePath, err := downloadFileToTemp(check.DownloadURL, "sothothv2_agent-update-*.tar.gz")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(archivePath)
+
+	binaryPath, err := extractSelfBinaryFromArchive(archivePath)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(binaryPath)
+
+	exePath, err := replaceCurrentBinary(binaryPath)
+	if err != nil {
+		return err
+	}
+
+	if err := prepareForSelfReexec(); err != nil {
+		return err
+	}
+
+	releaseProcessLock()
+
+	env := make([]string, 0, len(os.Environ())+1)
+	for _, item := range os.Environ() {
+		if strings.HasPrefix(item, "SOTHOTHV2_ADOPT_EXISTING_SERVICES=") {
+			continue
+		}
+		env = append(env, item)
+	}
+	env = append(env, "SOTHOTHV2_ADOPT_EXISTING_SERVICES=1")
+
+	args := append([]string{exePath}, os.Args[1:]...)
+	if err := syscall.Exec(exePath, args, env); err != nil {
+		_ = acquireProcessLock()
+		return fmt.Errorf("failed to re-exec updated binary: %w", err)
+	}
 	return nil
 }
 
@@ -1563,6 +2297,15 @@ func startService(serviceName string) {
 		return
 	}
 	shutdownMutex.RUnlock()
+
+	if adoptExistingServicesOnce {
+		if adopted, err := tryAdoptExistingProcess(status); err != nil {
+			logger.Printf("[%s] Failed to inspect existing process for adoption: %v", serviceName, err)
+		} else if adopted {
+			logger.Printf("[%s] Service adopted after self-update, skipping restart", serviceName)
+			return
+		}
+	}
 
 	// 新增：检查PID文件对应的进程是否存在，如果存在则先杀死
 	if err := checkAndKillExistingProcess(status); err != nil {

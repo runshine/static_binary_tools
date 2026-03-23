@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -109,6 +110,9 @@ const (
 	APICodeServiceStopped  = 1003
 	APICodeShuttingDown    = 1004
 	APICodeUninstallFailed = 1005
+	APICodeStopFailed      = 1006
+	APICodeUpdateCheckFail = 1007
+	APICodeUpdateFailed    = 1008
 	APICodeBadRequest      = 2001
 	APICodeUnauthorized    = 2002
 	APICodeInternalError   = 5001
@@ -134,6 +138,9 @@ func startAPIServer() {
 	// 注册路由
 	mux.HandleFunc("/api/v1/agent/health", handleHealth)
 	mux.HandleFunc("/api/v1/agent/info", authMiddleware(handleAgentInfo))
+	mux.HandleFunc("/api/v1/agent/update/check", authMiddleware(handleAgentUpdateCheck))
+	mux.HandleFunc("/api/v1/agent/update", authMiddleware(handleAgentUpdate))
+	mux.HandleFunc("/api/v1/agent/stop", authMiddleware(handleAgentStop))
 	mux.HandleFunc("/api/v1/agent/uninstall", authMiddleware(handleAgentUninstall))
 	mux.HandleFunc("/api/v1/services", authMiddleware(handleServices))
 	mux.HandleFunc("/api/v1/services/", authMiddleware(handleServiceRouter))
@@ -634,6 +641,101 @@ func handleAgentUninstall(w http.ResponseWriter, r *http.Request) {
 			logger.Printf("Uninstall failed: %v", err)
 		}
 	}(workspacePath)
+}
+
+// handleAgentStop 停止 Agent（停止所有服务并终止自身，不删除 workspace）
+func handleAgentStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		respondError(w, APICodeBadRequest, "Method not allowed")
+		return
+	}
+
+	respondSuccess(w, map[string]interface{}{
+		"action":    "stop",
+		"status":    "initiated",
+		"workspace": strings.TrimSpace(monitorConfig.Workspace),
+	})
+
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		if err := performStop(); err != nil {
+			logger.Printf("Stop failed: %v", err)
+		}
+	}()
+}
+
+func handleAgentUpdateCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		respondError(w, APICodeBadRequest, "Method not allowed")
+		return
+	}
+
+	result, err := buildSelfUpdateCheck()
+	if err != nil {
+		respondError(w, APICodeUpdateCheckFail, fmt.Sprintf("Update check failed: %v", err))
+		return
+	}
+	respondSuccess(w, result)
+}
+
+func handleAgentUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		respondError(w, APICodeBadRequest, "Method not allowed")
+		return
+	}
+
+	force := false
+	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("force")), "true") {
+		force = true
+	}
+	if r.Body != nil {
+		defer r.Body.Close()
+		var payload struct {
+			Force bool `json:"force"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err == nil {
+			force = force || payload.Force
+		}
+	}
+
+	check, err := buildSelfUpdateCheck()
+	if err != nil {
+		respondError(w, APICodeUpdateCheckFail, fmt.Sprintf("Update check failed: %v", err))
+		return
+	}
+	if check.UpdateInProgress {
+		respondError(w, APICodeUpdateFailed, "Self update already in progress")
+		return
+	}
+	if !check.HasUpdate && !force {
+		respondSuccess(w, map[string]interface{}{
+			"action":          "update",
+			"status":          "no_update",
+			"current_version": check.CurrentVersion,
+			"latest_version":  func() string { if check.LatestPackage != nil { return check.LatestPackage.Version }; return "" }(),
+		})
+		return
+	}
+
+	respondSuccess(w, map[string]interface{}{
+		"action":          "update",
+		"status":          "initiated",
+		"force":           force,
+		"current_version": check.CurrentVersion,
+		"latest_version":  func() string { if check.LatestPackage != nil { return check.LatestPackage.Version }; return "" }(),
+		"download_url":    check.DownloadURL,
+	})
+
+	go func(force bool) {
+		time.Sleep(300 * time.Millisecond)
+		if err := performSelfUpdate(force); err != nil {
+			if errors.Is(err, errNoNewVersion) {
+				logger.Printf("Self update skipped: %v", err)
+				return
+			}
+			logger.Printf("Self update failed: %v", err)
+		}
+	}(force)
 }
 
 // readLastLines 读取文件最后 N 行

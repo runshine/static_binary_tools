@@ -97,6 +97,141 @@ paths:
                       fail_count: 3
                       monitor_mode: "monitor"
 
+  /agent/update/check:
+    get:
+      tags:
+        - Agent
+      summary: 检查 Agent 自身更新
+      description: |
+        仅检查 `sothothv2_agent` 自身是否有新版本。
+        不涉及任何子服务的软件包更新。
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              example:
+                code: 0
+                message: success
+                data:
+                  package_name: "sothothv2_agent"
+                  upstream: "http://172.31.30.100:80"
+                  system: "linux"
+                  architecture: "x86_64"
+                  current_version: "v0.1.0-20260322.120000"
+                  current_semver: "v0.1.0"
+                  current_build: "20260322.120000"
+                  executable_path: "/sothothv2/bin/sothothv2_agent"
+                  update_in_progress: false
+                  has_update: true
+                  latest_semver: "v0.1.0"
+                  latest_build: "20260323.010000"
+                  download_url: "http://172.31.30.100:80/api/packages/download/latest?system=linux&architecture=x86_64&name=sothothv2_agent"
+                  latest_package:
+                    name: "sothothv2_agent"
+                    version: "v0.1.0-20260323.010000"
+                    original_filename: "sothothv2_agent-v0.1.0-20260323.010000-linux-x86_64.tar.gz"
+
+  /agent/update:
+    post:
+      tags:
+        - Agent
+      summary: 执行 Agent 自身更新
+      description: |
+        下载并替换 `sothothv2_agent` 自身二进制，然后重新拉起 Agent。
+        更新过程只更新自身，不更新任何子服务软件包。
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                force:
+                  type: boolean
+                  default: false
+      responses:
+        '200':
+          description: 更新任务已启动或无需更新
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              example:
+                code: 0
+                message: success
+                data:
+                  action: "update"
+                  status: "initiated"
+                  force: false
+                  current_version: "v0.1.0-20260322.120000"
+                  latest_version: "v0.1.0-20260323.010000"
+                  download_url: "http://172.31.30.100:80/api/packages/download/latest?system=linux&architecture=x86_64&name=sothothv2_agent"
+
+  /agent/uninstall:
+    post:
+      tags:
+        - Agent
+      summary: 触发 Agent 自卸载
+      description: |
+        触发 Agent 自卸载流程。接口会先立即返回成功，然后由后台异步执行：
+        - 停止所有被管理服务
+        - 停止并禁用 `sothothv2.service`
+        - 删除 systemd unit / 自启动链接
+        - 删除 workspace 下全部目录和文件
+        - 不保留工作空间残留内容
+      responses:
+        '200':
+          description: 卸载任务已启动
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              example:
+                code: 0
+                message: success
+                data:
+                  action: "uninstall"
+                  status: "initiated"
+                  workspace: "/sothothv2"
+        '1005':
+          description: 卸载校验或触发失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /agent/stop:
+    post:
+      tags:
+        - Agent
+      summary: 停止 Agent
+      description: |
+        停止所有被管理子服务，并终止 Agent 自身。
+        该接口不会删除 workspace，也不会移除部署文件。
+      responses:
+        '200':
+          description: 停止任务已启动
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              example:
+                code: 0
+                message: success
+                data:
+                  action: "stop"
+                  status: "initiated"
+                  workspace: "/sothothv2"
+        '1006':
+          description: 停止流程触发失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
   /services:
     get:
       tags:

@@ -572,12 +572,18 @@ class DatabaseManager:
                                                                id INTEGER PRIMARY KEY AUTOINCREMENT,
                                                                name TEXT UNIQUE NOT NULL,
                                                                path TEXT NOT NULL,
+                                                               project_name TEXT,
                                                                enabled INTEGER DEFAULT 1,
                                                                status TEXT DEFAULT 'stopped',
                                                                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                                                                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                        )
                        ''')
+
+        cursor.execute("PRAGMA table_info(services)")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+        if 'project_name' not in existing_columns:
+            cursor.execute("ALTER TABLE services ADD COLUMN project_name TEXT")
 
         # 创建配置表
         cursor.execute('''
@@ -630,6 +636,7 @@ class ServiceManager:
 
         # 创建服务目录
         self.compose_root.mkdir(parents=True, exist_ok=True)
+        self.backfill_service_project_names()
 
     def _get_runtime_operation(self, service_name: str) -> Dict[str, Any]:
         with self.runtime_operations_lock:
@@ -665,6 +672,26 @@ class ServiceManager:
         }
         with self.runtime_operations_lock:
             self.runtime_operations[service_name] = payload
+
+    def backfill_service_project_names(self):
+        """为历史服务补齐持久化的 compose project 名称。"""
+        try:
+            rows = self.db.fetch_all(
+                "SELECT name, path, project_name FROM services"
+            )
+            for row in rows or []:
+                current_project = str(row['project_name'] or '').strip()
+                if current_project:
+                    continue
+                service_name = str(row['name'])
+                compose_file = self.get_compose_file(service_name)
+                resolved_project = self.resolve_compose_project_name(compose_file, service_name)
+                self.db.execute_query(
+                    "UPDATE services SET project_name = ?, updated_at = CURRENT_TIMESTAMP WHERE name = ?",
+                    (resolved_project, service_name)
+                )
+        except Exception as e:
+            logger.warning(f"补齐 services.project_name 失败: {e}")
 
     def get_service_operation_status(self, service_name: str) -> Dict[str, Any]:
         return self._get_runtime_operation(service_name)
@@ -1055,6 +1082,46 @@ class ServiceManager:
         """获取compose文件路径"""
         return self.get_service_path(service_name) / 'docker-compose.yaml'
 
+    def get_project_name(self, service_name: str) -> str:
+        """获取 docker compose project 名称。
+
+        优先读取数据库中部署时记录的 project_name。
+        历史数据如果缺失，则从 compose 顶层 `name` 自动补齐并回写数据库。
+        最后才回退到服务名（目录名）。
+        """
+        record = self.db.fetch_one(
+            "SELECT project_name FROM services WHERE name = ?",
+            (service_name,)
+        )
+        if record:
+            project_name = str(record['project_name'] or '').strip()
+            if project_name:
+                return project_name
+
+        compose_file = self.get_compose_file(service_name)
+        compose_data = self.parse_compose_file(compose_file)
+        if isinstance(compose_data, dict):
+            project_name = str(compose_data.get('name') or '').strip()
+            if project_name:
+                try:
+                    self.db.execute_query(
+                        "UPDATE services SET project_name = ?, updated_at = CURRENT_TIMESTAMP WHERE name = ?",
+                        (project_name, service_name)
+                    )
+                except Exception as e:
+                    logger.warning(f"回写服务 {service_name} 的 project_name 失败: {e}")
+                return project_name
+        return service_name
+
+    def resolve_compose_project_name(self, compose_file: Path, service_name: str) -> str:
+        """在服务创建/导入时解析并固定 compose project 名称。"""
+        compose_data = self.parse_compose_file(compose_file)
+        if isinstance(compose_data, dict):
+            project_name = str(compose_data.get('name') or '').strip()
+            if project_name:
+                return project_name
+        return service_name
+
     def parse_compose_file(self, compose_file: Path) -> Dict:
         """解析compose文件"""
         try:
@@ -1072,8 +1139,7 @@ class ServiceManager:
             if not compose_file.exists():
                 return {'status': 'not_found', 'containers': [], 'operation': operation}
 
-            # 获取项目名称（使用文件夹名）
-            project_name = service_name
+            project_name = self.get_project_name(service_name)
 
             # 方法1：使用JSON Lines格式输出（每行一个JSON对象）
             cmd = [
@@ -1172,8 +1238,7 @@ class ServiceManager:
                 self._set_runtime_operation(service_name, 'running', 100, '服务已在运行', active=False)
                 return True, "服务已在运行"
 
-            # 获取项目名称
-            project_name = service_name
+            project_name = self.get_project_name(service_name)
 
             # 执行docker-compose pull（带进度）
             pull_ok, pull_msg = self._run_pull_with_progress(service_name, compose_file, project_name)
@@ -1248,8 +1313,7 @@ class ServiceManager:
 
             self._set_runtime_operation(service_name, 'stopping', 10, '正在停止服务', active=True)
 
-            # 获取项目名称
-            project_name = service_name
+            project_name = self.get_project_name(service_name)
 
             # 执行docker-compose down
             cmd = [
@@ -1329,10 +1393,12 @@ class ServiceManager:
                 shutil.rmtree(service_path, ignore_errors=True)
                 return False, f"container_name冲突: {', '.join(conflicts)}，请修改模板中的container_name后重试"
 
+            project_name = self.resolve_compose_project_name(compose_file, service_name)
+
             # 插入数据库记录
             self.db.execute_query(
-                "INSERT INTO services (name, path, status) VALUES (?, ?, 'stopped')",
-                (service_name, str(service_path))
+                "INSERT INTO services (name, path, project_name, status) VALUES (?, ?, ?, 'stopped')",
+                (service_name, str(service_path), project_name)
             )
 
             logger.info(f"服务 {service_name} 创建成功")
@@ -1457,10 +1523,12 @@ class ServiceManager:
                 shutil.rmtree(service_path, ignore_errors=True)
                 return False, f"container_name冲突: {', '.join(conflicts)}，请修改模板中的container_name后重试"
 
+            project_name = self.resolve_compose_project_name(target_yaml, service_name)
+
             # 插入数据库记录
             self.db.execute_query(
-                "INSERT INTO services (name, path, status) VALUES (?, ?, 'stopped')",
-                (service_name, str(service_path))
+                "INSERT INTO services (name, path, project_name, status) VALUES (?, ?, ?, 'stopped')",
+                (service_name, str(service_path), project_name)
             )
 
             logger.info(f"服务 {service_name} 从压缩包创建成功，格式: {file_ext}")
@@ -1637,8 +1705,7 @@ class ServiceManager:
             if not compose_file.exists():
                 return False, f"服务 {service_name} 不存在"
 
-            # 获取项目名称
-            project_name = service_name
+            project_name = self.get_project_name(service_name)
 
             # 执行docker-compose logs
             cmd = [
@@ -1672,8 +1739,7 @@ class ServiceManager:
             if not compose_file.exists():
                 return False, f"服务 {service_name} 不存在"
 
-            # 获取项目名称
-            project_name = service_name
+            project_name = self.get_project_name(service_name)
 
             # 构建docker-compose exec命令
             cmd = [
@@ -1737,7 +1803,7 @@ class ServiceManager:
             if not resolved_container:
                 return False, None, "无法解析容器名称，请指定container参数"
 
-            project_name = service_name
+            project_name = self.get_project_name(service_name)
             terminal_mode = (mode or 'shell').strip().lower()
             detach_sequence = b''
 
@@ -3403,6 +3469,7 @@ def fix_validation_issues():
                                     try:
                                         # 尝试从YAML文件解析服务名
                                         service_name = None
+                                        project_name = None
                                         yaml_file = None
 
                                         if docker_compose_yaml.exists():
@@ -3415,18 +3482,19 @@ def fix_validation_issues():
                                                 parsed = yaml.safe_load(f)
                                                 # 尝试从YAML中获取服务名
                                                 if parsed and 'name' in parsed:
-                                                    service_name = parsed['name']
+                                                    project_name = parsed['name']
                                                 elif parsed and 'services' in parsed:
                                                     # 使用第一个服务名
                                                     first_service = next(iter(parsed['services'].keys()))
                                                     service_name = f"{item.name}_{first_service}"
 
                                         service_name = service_name or item.name
+                                        project_name = str(project_name or service_name)
 
                                         # 插入数据库记录
                                         db_conn.execute(
-                                            "INSERT INTO services (name, path, status, enabled) VALUES (?, ?, 'stopped', 0)",
-                                            (service_name, str(item))
+                                            "INSERT INTO services (name, path, project_name, status, enabled) VALUES (?, ?, ?, 'stopped', 0)",
+                                            (service_name, str(item), project_name)
                                         )
                                         db_conn.commit()
 
