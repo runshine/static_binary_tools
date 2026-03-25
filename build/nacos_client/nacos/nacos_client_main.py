@@ -575,6 +575,7 @@ class DatabaseManager:
                                                                project_name TEXT,
                                                                template_id INTEGER,
                                                                template_name TEXT,
+                                                               tags_json TEXT DEFAULT '[]',
                                                                enabled INTEGER DEFAULT 1,
                                                                status TEXT DEFAULT 'stopped',
                                                                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -590,6 +591,8 @@ class DatabaseManager:
             cursor.execute("ALTER TABLE services ADD COLUMN template_id INTEGER")
         if 'template_name' not in existing_columns:
             cursor.execute("ALTER TABLE services ADD COLUMN template_name TEXT")
+        if 'tags_json' not in existing_columns:
+            cursor.execute("ALTER TABLE services ADD COLUMN tags_json TEXT DEFAULT '[]'")
 
         # 创建配置表
         cursor.execute('''
@@ -701,6 +704,37 @@ class ServiceManager:
 
     def get_service_operation_status(self, service_name: str) -> Dict[str, Any]:
         return self._get_runtime_operation(service_name)
+
+    @staticmethod
+    def normalize_tags(tags: Any) -> List[str]:
+        if isinstance(tags, str):
+            try:
+                parsed = json.loads(tags)
+                if isinstance(parsed, list):
+                    tags = parsed
+                else:
+                    tags = [item.strip() for item in tags.split(',')]
+            except Exception:
+                tags = [item.strip() for item in tags.split(',')]
+        elif not isinstance(tags, (list, tuple, set)):
+            tags = []
+
+        seen = set()
+        normalized: List[str] = []
+        for item in tags:
+            text = str(item).strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            normalized.append(text)
+        return normalized
+
+    def get_service_tags(self, service_name: str) -> List[str]:
+        row = self.db.fetch_one("SELECT tags_json FROM services WHERE name = ?", (service_name,))
+        if not row:
+            return []
+        raw = row['tags_json'] if isinstance(row, sqlite3.Row) else row.get('tags_json')
+        return self.normalize_tags(raw)
 
     def _run_pull_with_progress(self, service_name: str, compose_file: Path, project_name: str) -> Tuple[bool, str]:
         """
@@ -1369,7 +1403,8 @@ class ServiceManager:
         service_name: str,
         yaml_content: str,
         template_name: str = '',
-        template_id: Optional[int] = None
+        template_id: Optional[int] = None,
+        tags: Optional[List[str]] = None
     ) -> Tuple[bool, str]:
         """从YAML创建服务"""
         service_path = None
@@ -1409,9 +1444,16 @@ class ServiceManager:
 
             # 插入数据库记录
             self.db.execute_query(
-                "INSERT INTO services (name, path, project_name, template_id, template_name, status) "
-                "VALUES (?, ?, ?, ?, ?, 'stopped')",
-                (service_name, str(service_path), project_name, template_id, str(template_name or '').strip())
+                "INSERT INTO services (name, path, project_name, template_id, template_name, tags_json, status) "
+                "VALUES (?, ?, ?, ?, ?, ?, 'stopped')",
+                (
+                    service_name,
+                    str(service_path),
+                    project_name,
+                    template_id,
+                    str(template_name or '').strip(),
+                    json.dumps(self.normalize_tags(tags), ensure_ascii=False),
+                )
             )
 
             logger.info(f"服务 {service_name} 创建成功")
@@ -1433,7 +1475,8 @@ class ServiceManager:
         service_name: str,
         zip_file_path: str,
         template_name: str = '',
-        template_id: Optional[int] = None
+        template_id: Optional[int] = None,
+        tags: Optional[List[str]] = None
     ) -> Tuple[bool, str]:
         """从压缩包创建服务（支持多种格式）"""
         temp_dir = None
@@ -1546,9 +1589,16 @@ class ServiceManager:
 
             # 插入数据库记录
             self.db.execute_query(
-                "INSERT INTO services (name, path, project_name, template_id, template_name, status) "
-                "VALUES (?, ?, ?, ?, ?, 'stopped')",
-                (service_name, str(service_path), project_name, template_id, str(template_name or '').strip())
+                "INSERT INTO services (name, path, project_name, template_id, template_name, tags_json, status) "
+                "VALUES (?, ?, ?, ?, ?, ?, 'stopped')",
+                (
+                    service_name,
+                    str(service_path),
+                    project_name,
+                    template_id,
+                    str(template_name or '').strip(),
+                    json.dumps(self.normalize_tags(tags), ensure_ascii=False),
+                )
             )
 
             logger.info(f"服务 {service_name} 从压缩包创建成功，格式: {file_ext}")
@@ -2760,13 +2810,14 @@ def list_services():
 
     try:
         services = db_conn.execute(
-            "SELECT id, name, path, project_name, template_id, template_name, enabled, status, created_at, updated_at "
+            "SELECT id, name, path, project_name, template_id, template_name, tags_json, enabled, status, created_at, updated_at "
             "FROM services ORDER BY name"
         ).fetchall()
 
         result = []
         for service in services:
             service_dict = dict(service)
+            service_dict['tags'] = service_manager.normalize_tags(service_dict.get('tags_json'))
             # 获取实时状态
             status_info = service_manager.get_service_status(service['name'])
             service_dict['real_status'] = status_info
@@ -2785,7 +2836,7 @@ def get_service(service_name):
 
     try:
         service = db_conn.execute(
-            "SELECT id, name, path, project_name, template_id, template_name, enabled, status, created_at, updated_at "
+            "SELECT id, name, path, project_name, template_id, template_name, tags_json, enabled, status, created_at, updated_at "
             "FROM services WHERE name = ?",
             (service_name,)
         ).fetchone()
@@ -2794,6 +2845,7 @@ def get_service(service_name):
             return jsonify({'error': '服务不存在'}), 404
 
         service_dict = dict(service)
+        service_dict['tags'] = service_manager.normalize_tags(service_dict.get('tags_json'))
         # 获取实时状态
         status_info = service_manager.get_service_status(service_name)
         service_dict['real_status'] = status_info
@@ -2847,6 +2899,7 @@ def create_service_from_yaml():
         service_name = data.get('name')
         yaml_content = data.get('yaml')
         template_name = str(data.get('template_name') or '').strip()
+        tags = service_manager.normalize_tags(data.get('tags'))
         template_id = data.get('template_id')
         try:
             template_id = int(template_id) if template_id not in (None, '', []) else None
@@ -2860,7 +2913,8 @@ def create_service_from_yaml():
             service_name,
             yaml_content,
             template_name=template_name,
-            template_id=template_id
+            template_id=template_id,
+            tags=tags
         )
 
         if success:
@@ -2884,6 +2938,7 @@ def create_service_from_zip():
         file = request.files['file']
         service_name = request.form.get('name')
         template_name = str(request.form.get('template_name') or '').strip()
+        tags = service_manager.normalize_tags(request.form.get('tags'))
         template_id = request.form.get('template_id')
         try:
             template_id = int(template_id) if template_id not in (None, '', []) else None
@@ -2911,7 +2966,8 @@ def create_service_from_zip():
             service_name,
             str(archive_path),
             template_name=template_name,
-            template_id=template_id
+            template_id=template_id,
+            tags=tags
         )
 
         # 清理临时文件
@@ -3879,7 +3935,7 @@ class AgentServiceReporter:
 
     def _collect_services_snapshot(self) -> List[Dict[str, Any]]:
         services = db_conn.execute(
-            "SELECT name, status, project_name, template_id, template_name FROM services ORDER BY name"
+            "SELECT name, status, project_name, template_id, template_name, tags_json FROM services ORDER BY name"
         ).fetchall()
 
         snapshot: List[Dict[str, Any]] = []
@@ -3917,7 +3973,8 @@ class AgentServiceReporter:
                 'ports': ports,
                 'project_name': str(row['project_name'] or '').strip(),
                 'template_id': row['template_id'],
-                'template_name': str(row['template_name'] or '').strip()
+                'template_name': str(row['template_name'] or '').strip(),
+                'tags': self.normalize_tags(row['tags_json']),
             })
 
         return snapshot
