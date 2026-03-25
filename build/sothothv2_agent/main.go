@@ -1211,7 +1211,7 @@ echo "$(date -Is) [control] workspace removed successfully"
 `
 	}
 
-	scriptContent := fmt.Sprintf(`#!/bin/sh
+scriptContent := fmt.Sprintf(`#!/bin/sh
 set -eu
 
 WORKSPACE=%s
@@ -1226,14 +1226,22 @@ echo "$(date -Is) [uninstall] helper started for workspace: $WORKSPACE"
 cd /
 
 if command -v systemctl >/dev/null 2>&1; then
-  systemctl stop "$UNIT_NAME" || true
+  systemctl kill "$UNIT_NAME" >/dev/null 2>&1 || true
+  systemctl stop --no-block "$UNIT_NAME" >/dev/null 2>&1 || true
 fi
 
 kill -TERM "$CURRENT_PID" 2>/dev/null || true
 sleep 1
 pkill -TERM -f "$WORKSPACE/bin/sothothv2_agent" 2>/dev/null || true
-sleep 1
+sleep 2
 pkill -KILL -f "$WORKSPACE/bin/sothothv2_agent" 2>/dev/null || true
+
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  if ! pgrep -f "$WORKSPACE/bin/sothothv2_agent" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
 
 `, shellQuote(workspacePath), shellQuote(unitPath), shellQuote(unitName), currentPID, shellQuote(logPath))
 
