@@ -3146,6 +3146,13 @@ def execute_service_command_ws(ws, service_name):
                     parsed = json.loads(msg)
                     if isinstance(parsed, dict):
                         msg_type = parsed.get('type')
+                        if msg_type == 'ping':
+                            # 浏览器/Ingress 空闲保活，不写入终端，仅回一个空帧保活双向链路
+                            try:
+                                ws.send('')
+                            except Exception:
+                                pass
+                            continue
                         if msg_type == 'resize':
                             # 当前后端使用非TTY(-T)模式，先忽略resize请求，避免协议报错
                             continue
