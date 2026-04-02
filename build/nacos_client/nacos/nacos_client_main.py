@@ -53,6 +53,13 @@ docker_client = None
 server_should_stop = False
 logger = None
 VERSION_FILE = Path(__file__).resolve().parent / 'version.json'
+_services_cache_lock = threading.Lock()
+_services_cache: Dict[str, Any] = {
+    'payload': None,
+    'ts': 0.0,
+    'refreshing': False,
+    'last_error': '',
+}
 
 # ===================== 系统信息收集相关类 =====================
 
@@ -539,7 +546,9 @@ class ConfigManager:
                 'platform_agent_report_timeout_sec': 15,
                 'agent_key': '',
                 'docker_compose_pull_timeout_sec': 1800,
-                'docker_compose_up_timeout_sec': 1200
+                'docker_compose_up_timeout_sec': 1200,
+                'service_status_timeout_sec': 8,
+                'services_cache_ttl_sec': 5
             }
 
             # 更新配置
@@ -639,6 +648,7 @@ class ServiceManager:
         self.docker_socket = config['docker_socket']  # 保存docker_socket
         self.pull_timeout_sec = int(config.get('docker_compose_pull_timeout_sec', 300))
         self.up_timeout_sec = int(config.get('docker_compose_up_timeout_sec', 1200))
+        self.status_timeout_sec = max(1, int(config.get('service_status_timeout_sec', 8)))
         self.db = DatabaseManager(config['database_file'])
         self.runtime_operations: Dict[str, Dict[str, Any]] = {}
         self.runtime_operations_lock = threading.Lock()
@@ -1194,39 +1204,38 @@ class ServiceManager:
                 cmd,
                 capture_output=True,
                 text=True,
-                env=self.get_env_with_docker_host()
+                env=self.get_env_with_docker_host(),
+                timeout=self.status_timeout_sec
             )
 
             if result.returncode == 0:
                 containers = []
                 output = result.stdout.strip()
 
-                # 方法1：处理JSON Lines格式
+                # 处理 JSON Lines / JSON 数组 / 单对象三种输出格式
                 if output:
-                    # 方法1a：使用jsonlines库（如果安装）
-                    try:
-                        import jsonlines
-                        with jsonlines.Reader(output.splitlines()) as reader:
-                            containers = list(reader)
-                    except ImportError:
-                        # 方法1b：手动处理每行JSON
-                        for line in output.splitlines():
-                            if line.strip():
-                                try:
-                                    containers.append(json.loads(line.strip()))
-                                except json.JSONDecodeError:
-                                    continue
+                    for line in output.splitlines():
+                        stripped = line.strip()
+                        if not stripped:
+                            continue
+                        try:
+                            parsed = json.loads(stripped)
+                        except json.JSONDecodeError:
+                            continue
+                        if isinstance(parsed, dict):
+                            containers.append(parsed)
+                        elif isinstance(parsed, list):
+                            containers.extend([item for item in parsed if isinstance(item, dict)])
 
-                    # 方法2：如果输出是单个JSON对象
                     if not containers:
                         try:
-                            data = json.loads(output)
-                            if isinstance(data, list):
-                                containers = data
-                            elif isinstance(data, dict):
-                                containers = [data]
-                        except json.JSONDecodeError:
-                            pass
+                            parsed = json.loads(output)
+                            if isinstance(parsed, dict):
+                                containers = [parsed]
+                            elif isinstance(parsed, list):
+                                containers = [item for item in parsed if isinstance(item, dict)]
+                        except Exception:
+                            containers = []
 
                 running_count = sum(1 for c in containers if c.get('State') == 'running')
                 total_count = len(containers)
@@ -1255,6 +1264,17 @@ class ServiceManager:
                     fallback_status = str(operation.get('phase') or fallback_status)
                 return {'status': fallback_status, 'containers': [], 'operation': operation}
 
+        except subprocess.TimeoutExpired:
+            operation = self.get_service_operation_status(service_name)
+            status = 'unknown'
+            if operation.get('active'):
+                status = str(operation.get('phase') or status)
+            return {
+                'status': status,
+                'containers': [],
+                'operation': operation,
+                'error': f'compose ps timeout ({self.status_timeout_sec}s)'
+            }
         except Exception as e:
             logger.error(f"获取服务状态失败: {e}")
             operation = self.get_service_operation_status(service_name)
@@ -2204,7 +2224,9 @@ class WebServer:
             app.run(
                 host=self.config['host'],
                 port=self.config['port'],
-                debug=False
+                debug=False,
+                threaded=True,
+                use_reloader=False
             )
         except Exception as e:
             logger.error(f"WEB服务器启动失败: {e}")
@@ -2789,6 +2811,78 @@ def get_docker_images():
 
 # ===================== 原有的API路由 =====================
 
+def _services_cache_ttl_sec() -> int:
+    try:
+        return max(1, int(config.get('services_cache_ttl_sec', 5)))
+    except Exception:
+        return 5
+
+
+def _build_services_snapshot() -> List[Dict[str, Any]]:
+    services = db_conn.execute(
+        "SELECT id, name, path, project_name, template_id, template_name, tags_json, enabled, status, created_at, updated_at "
+        "FROM services ORDER BY name"
+    ).fetchall()
+
+    result: List[Dict[str, Any]] = []
+    for service in services:
+        service_dict = dict(service)
+        service_dict['tags'] = service_manager.normalize_tags(service_dict.get('tags_json'))
+        service_dict['real_status'] = service_manager.get_service_status(service['name'])
+        result.append(service_dict)
+    return result
+
+
+def _get_services_snapshot(force_refresh: bool = False) -> List[Dict[str, Any]]:
+    ttl = _services_cache_ttl_sec()
+    is_refresh_owner = False
+
+    for _ in range(6):
+        now = time.time()
+        with _services_cache_lock:
+            cached_payload = _services_cache.get('payload')
+            cached_ts = float(_services_cache.get('ts') or 0.0)
+            cache_fresh = bool(cached_payload is not None and (now - cached_ts) < ttl)
+
+            if not force_refresh and cache_fresh:
+                return cached_payload
+
+            if _services_cache.get('refreshing'):
+                if cached_payload is not None:
+                    return cached_payload
+            else:
+                _services_cache['refreshing'] = True
+                is_refresh_owner = True
+                break
+        time.sleep(0.05)
+
+    with _services_cache_lock:
+        if not is_refresh_owner:
+            cached_payload = _services_cache.get('payload')
+            if cached_payload is not None:
+                return cached_payload
+        elif _services_cache.get('payload') is not None and not force_refresh:
+            return _services_cache.get('payload')
+
+    try:
+        payload = _build_services_snapshot()
+    except Exception as exc:
+        with _services_cache_lock:
+            fallback = _services_cache.get('payload')
+            _services_cache['last_error'] = str(exc)
+            _services_cache['refreshing'] = False
+        if fallback is not None:
+            logger.warning(f"/api/services 刷新失败，回退缓存: {exc}")
+            return fallback
+        raise
+
+    with _services_cache_lock:
+        _services_cache['payload'] = payload
+        _services_cache['ts'] = time.time()
+        _services_cache['last_error'] = ''
+        _services_cache['refreshing'] = False
+    return payload
+
 # 健康检查
 @app.route('/api/health', methods=['GET'])
 def health_check():
@@ -2809,21 +2903,8 @@ def list_services():
         return jsonify({'error': '认证失败'}), 401
 
     try:
-        services = db_conn.execute(
-            "SELECT id, name, path, project_name, template_id, template_name, tags_json, enabled, status, created_at, updated_at "
-            "FROM services ORDER BY name"
-        ).fetchall()
-
-        result = []
-        for service in services:
-            service_dict = dict(service)
-            service_dict['tags'] = service_manager.normalize_tags(service_dict.get('tags_json'))
-            # 获取实时状态
-            status_info = service_manager.get_service_status(service['name'])
-            service_dict['real_status'] = status_info
-            result.append(service_dict)
-
-        return jsonify(result)
+        force_refresh = request.args.get('refresh') == '1'
+        return jsonify(_get_services_snapshot(force_refresh=force_refresh))
     except Exception as e:
         logger.error(f"列出服务失败: {e}")
         return jsonify({'error': str(e)}), 500
