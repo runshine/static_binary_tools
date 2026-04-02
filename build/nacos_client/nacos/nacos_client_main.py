@@ -3914,6 +3914,47 @@ class AgentServiceReporter:
         if agent_key and not self.agent_key:
             self.agent_key = agent_key.strip()
 
+    @staticmethod
+    def normalize_tags(tags: Any) -> List[str]:
+        """Normalize tags for service reporting with stable dedup behavior."""
+        return ServiceManager.normalize_tags(tags)
+
+    @staticmethod
+    def _normalize_tags_safe(tags: Any) -> List[str]:
+        """
+        Backward-compatible tag normalizer for reporter.
+        防御旧版本/热更新不一致导致 normalize_tags 缺失或异常时，避免中断周期上报线程。
+        """
+        try:
+            normalize = getattr(ServiceManager, 'normalize_tags', None)
+            if callable(normalize):
+                return normalize(tags)
+        except Exception:
+            pass
+
+        # Fallback parser: keep behavior close to ServiceManager.normalize_tags
+        if isinstance(tags, str):
+            try:
+                parsed = json.loads(tags)
+                if isinstance(parsed, list):
+                    tags = parsed
+                else:
+                    tags = [item.strip() for item in tags.split(',')]
+            except Exception:
+                tags = [item.strip() for item in tags.split(',')]
+        elif not isinstance(tags, (list, tuple, set)):
+            tags = []
+
+        seen = set()
+        normalized: List[str] = []
+        for item in tags:
+            text = str(item).strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            normalized.append(text)
+        return normalized
+
     def _extract_ports_from_compose(self, compose_data: Dict) -> Dict[str, str]:
         ports: Dict[str, str] = {}
         try:
@@ -3974,7 +4015,7 @@ class AgentServiceReporter:
                 'project_name': str(row['project_name'] or '').strip(),
                 'template_id': row['template_id'],
                 'template_name': str(row['template_name'] or '').strip(),
-                'tags': self.normalize_tags(row['tags_json']),
+                'tags': self._normalize_tags_safe(row['tags_json']),
             })
 
         return snapshot
