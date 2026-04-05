@@ -4130,7 +4130,10 @@ class AgentServiceReporter:
             'project_id': workspace_id,
             'hostname': hostname,
             'ip_address': report_ip,
-            'full_name': f"{workspace_id}-{hostname}-{report_ip}" if workspace_id and report_ip else '',
+            'full_name': (
+                f"{workspace_id}-{self.agent_key}-{hostname}-{report_ip}"
+                if workspace_id and self.agent_key and report_ip else ''
+            ),
             'services': self._collect_services_snapshot()
         }
 

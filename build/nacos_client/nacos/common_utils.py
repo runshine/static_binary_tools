@@ -278,8 +278,10 @@ def start_nacos_service(service_name,port,metadata = None, health_check_fun=None
     metadata['service_name'] = service_name
     metadata['service_port'] = port
     metadata['hostname'] = socket.gethostname()
+    node_uuid = str(get_config('node_uuid') or '').strip()
+    workspace_id = str(get_config('workspace_id') or '').strip()
     ip_address = get_sothoth_ip_address()
-    service_name = "{}-{}-{}".format(get_config('workspace_id'),socket.gethostname(),ip_address)
+    service_name = "{}-{}-{}-{}".format(workspace_id, node_uuid, socket.gethostname(), ip_address)
     while register_retry > 0 and not nacos_service_register(service_name,ip_address,port,metadata):
         register_retry = register_retry -1
         logging.getLogger().warning(f"Failed register to nacos server, retry: {register_retry}")
@@ -290,7 +292,7 @@ def start_nacos_service(service_name,port,metadata = None, health_check_fun=None
     last_health_check_ret = True
     while True:
         ip_address = get_sothoth_ip_address()
-        service_name = "{}-{}-{}".format(get_config('workspace_id'),socket.gethostname(),ip_address)
+        service_name = "{}-{}-{}-{}".format(workspace_id, node_uuid, socket.gethostname(), ip_address)
         time.sleep(get_config('nacos_heartbeat_time'))
         if health_check_fun is not None:
             health_check_ret = health_check_fun(*args)
