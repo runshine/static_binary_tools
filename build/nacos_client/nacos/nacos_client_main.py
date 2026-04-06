@@ -1418,6 +1418,40 @@ class ServiceManager:
         self._set_runtime_operation(service_name, 'failed', 95, '重启失败', active=False, error=message)
         return False, message
 
+    def update_service(self, service_name: str) -> Tuple[bool, str]:
+        """更新服务镜像并重启（任意状态可调用）"""
+        try:
+            compose_file = self.get_compose_file(service_name)
+            if not compose_file.exists():
+                return False, f"服务 {service_name} 不存在"
+
+            self._set_runtime_operation(service_name, 'updating', 1, '准备更新镜像并重启', active=True)
+
+            # 更新语义固定为 pull + restart，确保容器实际重建生效。
+            project_name = self.get_project_name(service_name)
+            pull_ok, pull_msg = self._run_pull_with_progress(service_name, compose_file, project_name)
+            if not pull_ok:
+                self.db.execute_query(
+                    "UPDATE services SET status = 'error', updated_at = CURRENT_TIMESTAMP WHERE name = ?",
+                    (service_name,)
+                )
+                self._set_runtime_operation(service_name, 'failed', 95, '更新失败', active=False, error=pull_msg)
+                return False, f"拉取镜像失败: {pull_msg}"
+
+            self._set_runtime_operation(service_name, 'restarting', 85, '镜像拉取完成，重启服务中', active=True)
+            restart_ok, restart_msg = self.restart_service(service_name)
+            if restart_ok:
+                return True, "服务更新成功"
+            return False, f"服务更新失败: {restart_msg}"
+        except Exception as e:
+            logger.error(f"更新服务失败: {e}")
+            self.db.execute_query(
+                "UPDATE services SET status = 'error', updated_at = CURRENT_TIMESTAMP WHERE name = ?",
+                (service_name,)
+            )
+            self._set_runtime_operation(service_name, 'failed', 95, '更新失败', active=False, error=str(e))
+            return False, f"更新失败: {str(e)}"
+
     def create_service_from_yaml(
         self,
         service_name: str,
@@ -3115,6 +3149,23 @@ def restart_service(service_name):
             return jsonify({'error': message}), 400
     except Exception as e:
         logger.error(f"重启服务失败: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/services/<service_name>/update', methods=['POST'])
+def update_service(service_name):
+    """更新服务镜像并重启"""
+    if not authenticate_request():
+        return jsonify({'error': '认证失败'}), 401
+
+    try:
+        success, message = service_manager.update_service(service_name)
+
+        if success:
+            return jsonify({'message': message}), 200
+        else:
+            return jsonify({'error': message}), 400
+    except Exception as e:
+        logger.error(f"更新服务失败: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/services/<service_name>', methods=['DELETE'])
