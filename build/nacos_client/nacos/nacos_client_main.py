@@ -1458,7 +1458,8 @@ class ServiceManager:
         yaml_content: str,
         template_name: str = '',
         template_id: Optional[int] = None,
-        tags: Optional[List[str]] = None
+        tags: Optional[List[str]] = None,
+        files: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[bool, str]:
         """从YAML创建服务"""
         service_path = None
@@ -1480,6 +1481,27 @@ class ServiceManager:
             compose_file = service_path / 'docker-compose.yaml'
             with open(compose_file, 'w', encoding='utf-8') as f:
                 f.write(yaml_content)
+
+            # 写入随YAML下发的附加文件（例如 .llm-provider-files/*）
+            for item in (files or []):
+                if not isinstance(item, dict):
+                    continue
+                rel = str(item.get('relative_path') or '').strip()
+                content = item.get('content')
+                if not rel or not isinstance(content, str):
+                    continue
+                rel_path = Path(rel)
+                if rel_path.is_absolute() or '..' in rel_path.parts:
+                    shutil.rmtree(service_path, ignore_errors=True)
+                    return False, f"附加文件路径非法: {rel}"
+                target_file = (service_path / rel_path).resolve()
+                try:
+                    target_file.relative_to(service_path.resolve())
+                except Exception:
+                    shutil.rmtree(service_path, ignore_errors=True)
+                    return False, f"附加文件路径越界: {rel}"
+                target_file.parent.mkdir(parents=True, exist_ok=True)
+                target_file.write_text(content, encoding='utf-8')
 
             # 验证YAML格式和docker-compose有效性
             is_valid, error_msg = self.validate_compose_file(compose_file)
@@ -3011,6 +3033,7 @@ def create_service_from_yaml():
 
         service_name = data.get('name')
         yaml_content = data.get('yaml')
+        files = data.get('files') if isinstance(data.get('files'), list) else []
         template_name = str(data.get('template_name') or '').strip()
         tags = service_manager.normalize_tags(data.get('tags'))
         template_id = data.get('template_id')
@@ -3027,7 +3050,8 @@ def create_service_from_yaml():
             yaml_content,
             template_name=template_name,
             template_id=template_id,
-            tags=tags
+            tags=tags,
+            files=files,
         )
 
         if success:
