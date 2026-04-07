@@ -2882,7 +2882,7 @@ def _get_services_snapshot(force_refresh: bool = False) -> List[Dict[str, Any]]:
                 return cached_payload
 
             if _services_cache.get('refreshing'):
-                if cached_payload is not None:
+                if cached_payload is not None and not force_refresh:
                     return cached_payload
             else:
                 _services_cache['refreshing'] = True
@@ -2893,10 +2893,8 @@ def _get_services_snapshot(force_refresh: bool = False) -> List[Dict[str, Any]]:
     with _services_cache_lock:
         if not is_refresh_owner:
             cached_payload = _services_cache.get('payload')
-            if cached_payload is not None:
+            if cached_payload is not None and not force_refresh:
                 return cached_payload
-        elif _services_cache.get('payload') is not None and not force_refresh:
-            return _services_cache.get('payload')
 
     try:
         payload = _build_services_snapshot()
@@ -4116,12 +4114,27 @@ class AgentServiceReporter:
             service_name = row['name']
             service_status = row['status']
             image = ''
+            images: List[str] = []
             ports: Dict[str, str] = {}
+            status_info: Dict[str, Any] = {}
 
             try:
-                status_info = self.service_manager.get_service_status(service_name)
+                status_payload = self.service_manager.get_service_status(service_name)
+                if isinstance(status_payload, dict):
+                    status_info = status_payload
                 if isinstance(status_info, dict):
                     service_status = status_info.get('status') or service_status
+                    containers = status_info.get('containers') or []
+                    if isinstance(containers, list):
+                        seen_images = set()
+                        for container in containers:
+                            if not isinstance(container, dict):
+                                continue
+                            container_image = str(container.get('Image') or container.get('image') or '').strip()
+                            if not container_image or container_image in seen_images:
+                                continue
+                            seen_images.add(container_image)
+                            images.append(container_image)
             except Exception:
                 pass
 
@@ -4132,18 +4145,28 @@ class AgentServiceReporter:
                     if isinstance(compose_data, dict):
                         svc_map = compose_data.get('services') or {}
                         if svc_map:
-                            first_service = next(iter(svc_map.values()))
-                            if isinstance(first_service, dict):
-                                image = str(first_service.get('image') or '')
+                            if not images:
+                                for service_def in svc_map.values():
+                                    if not isinstance(service_def, dict):
+                                        continue
+                                    fallback_image = str(service_def.get('image') or '').strip()
+                                    if not fallback_image or fallback_image in images:
+                                        continue
+                                    images.append(fallback_image)
                         ports = self._extract_ports_from_compose(compose_data)
             except Exception:
                 pass
+
+            if images:
+                image = images[0]
 
             snapshot.append({
                 'name': service_name,
                 'status': str(service_status or 'unknown'),
                 'image': image,
+                'images': images,
                 'ports': ports,
+                'real_status': status_info,
                 'project_name': str(row['project_name'] or '').strip(),
                 'template_id': row['template_id'],
                 'template_name': str(row['template_name'] or '').strip(),
