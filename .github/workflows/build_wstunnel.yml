@@ -52,17 +52,10 @@ jobs:
             apt-get install -y ${{ matrix.apt_extra_packages }}
           fi
 
-      - name: Install Rust toolchain
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          export PATH="$HOME/.cargo/bin:$PATH"
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-          rustup target add ${{ matrix.rust_target }}
-
       - name: Build binary
-        run: bash ${{ github.workspace }}/build/wstunnel/build.sh
+        run: /bin/bash ${{ github.workspace }}/build/wstunnel/build.sh
         env:
+          PATH: /github/home/.cargo/bin:/usr/local/cargo/bin:${{ env.PATH }}
           RUST_TARGET: ${{ matrix.rust_target }}
           OUTPUT_ARCH: ${{ matrix.output_arch }}
           LINKER: ${{ matrix.linker }}
