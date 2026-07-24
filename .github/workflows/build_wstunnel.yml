@@ -14,6 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     container: debian:bookworm
     strategy:
+      fail-fast: false
       matrix:
         include:
           - build_name: x86_64
@@ -73,24 +74,18 @@ jobs:
           OUTPUT_ARCH: ${{ matrix.output_arch }}
           LINKER: ${{ matrix.linker }}
 
-      - name: List Dir
-        run: |
-          cd "${{ github.workspace }}"
-          pwd
-          ls -lRt .
-
       - name: Upload binary to artifacts
         uses: actions/upload-artifact@v4
         with:
           name: wstunnel-v10.6.2-linux-${{ matrix.build_name }}.tar.gz
-          path: ${{ github.workspace }}/build/wstunnel/install/wstunnel-v10.6.2-linux-${{ matrix.output_arch }}.tar.gz
+          path: build/wstunnel/install/wstunnel-v10.6.2-linux-${{ matrix.output_arch }}.tar.gz
 
       - name: Create Release
         uses: ncipollo/release-action@v1
         with:
           tag: v1.0
           name: "Release v1.0"
-          artifacts: "${{ github.workspace }}/build/wstunnel/install/*"
+          artifacts: "build/wstunnel/install/*"
           artifactErrorsFailBuild: false
           allowUpdates: true
           token: ${{ secrets.GITHUB_TOKEN }}
