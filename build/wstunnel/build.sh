@@ -12,11 +12,14 @@ FEATURES="${WSTUNNEL_FEATURES:-aws-lc-rs}"
 ZIG_VERSION="${ZIG_VERSION:-0.14.1}"
 ZIG_DOWNLOAD_URL="${ZIG_DOWNLOAD_URL:-https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz}"
 CARGO_ZIGBUILD_VERSION="${CARGO_ZIGBUILD_VERSION:-0.20.1}"
+MUSL_CROSS_VERSION="${MUSL_CROSS_VERSION:-20260515}"
+ARMEL_MUSL_TOOLCHAIN_URL="${ARMEL_MUSL_TOOLCHAIN_URL:-https://github.com/cross-tools/musl-cross/releases/download/${MUSL_CROSS_VERSION}/arm-unknown-linux-musleabi.tar.xz}"
 SOURCE_TAR="v${VERSION}.tar.gz"
 SOURCE_URL="https://github.com/erebe/wstunnel/archive/refs/tags/${SOURCE_TAR}"
 SOURCE_ROOT="${BUILD_DIR}/wstunnel-${VERSION}"
 ZIG_ROOT="${HOME_SPACE}/zig-${ZIG_VERSION}"
 ZIG_BIN="${ZIG_ROOT}/zig"
+ARMEL_TOOLCHAIN_ROOT="${HOME_SPACE}/arm-unknown-linux-musleabi-cross"
 
 apt-get update
 apt-get install -y curl ca-certificates git xz-utils build-essential pkg-config file perl cmake
@@ -39,19 +42,6 @@ if ! rustup target list --installed | grep -qx "${RUST_TARGET}"; then
   rustup target add "${RUST_TARGET}"
 fi
 
-if [ ! -x "${ZIG_BIN}" ]; then
-  curl -L -o "${SOURCE_DIR}/zig-${ZIG_VERSION}.tar.xz" "${ZIG_DOWNLOAD_URL}"
-  mkdir -p "${ZIG_ROOT}"
-  tar -xJf "${SOURCE_DIR}/zig-${ZIG_VERSION}.tar.xz" -C "${BUILD_DIR}"
-  rm -rf "${ZIG_ROOT}"
-  mv "${BUILD_DIR}/zig-x86_64-linux-${ZIG_VERSION}" "${ZIG_ROOT}"
-fi
-export PATH="${ZIG_ROOT}:${PATH}"
-
-if ! command -v cargo-zigbuild >/dev/null 2>&1; then
-  cargo install cargo-zigbuild --locked --version "${CARGO_ZIGBUILD_VERSION}"
-fi
-
 curl -L -o "${SOURCE_DIR}/${SOURCE_TAR}" "${SOURCE_URL}"
 rm -rf "${SOURCE_ROOT}"
 cd "${BUILD_DIR}" && tar -xf "${SOURCE_DIR}/${SOURCE_TAR}"
@@ -62,13 +52,46 @@ cd "${SOURCE_ROOT}"
 export PKG_CONFIG_ALLOW_CROSS=1
 export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static"
 
-cargo zigbuild \
-  --release \
-  --locked \
-  --package wstunnel-cli \
-  --target "${RUST_TARGET}" \
-  --no-default-features \
-  --features "${FEATURES}"
+if [ "${RUST_TARGET}" = "armv5te-unknown-linux-musleabi" ]; then
+  if [ ! -x "${ARMEL_TOOLCHAIN_ROOT}/bin/arm-linux-musleabi-gcc" ]; then
+    curl -L -o "${SOURCE_DIR}/arm-unknown-linux-musleabi.tar.xz" "${ARMEL_MUSL_TOOLCHAIN_URL}"
+    tar -xJf "${SOURCE_DIR}/arm-unknown-linux-musleabi.tar.xz" -C "${BUILD_DIR}"
+    rm -rf "${ARMEL_TOOLCHAIN_ROOT}"
+    mv "${BUILD_DIR}/arm-unknown-linux-musleabi-cross" "${ARMEL_TOOLCHAIN_ROOT}"
+  fi
+  export PATH="${ARMEL_TOOLCHAIN_ROOT}/bin:${PATH}"
+  export CC_armv5te_unknown_linux_musleabi="arm-linux-musleabi-gcc"
+  export AR_armv5te_unknown_linux_musleabi="arm-linux-musleabi-ar"
+  export CARGO_TARGET_ARMV5TE_UNKNOWN_LINUX_MUSLEABI_LINKER="arm-linux-musleabi-gcc"
+  cargo build \
+    --release \
+    --locked \
+    --package wstunnel-cli \
+    --target "${RUST_TARGET}" \
+    --no-default-features \
+    --features "${FEATURES}"
+else
+  if [ ! -x "${ZIG_BIN}" ]; then
+    curl -L -o "${SOURCE_DIR}/zig-${ZIG_VERSION}.tar.xz" "${ZIG_DOWNLOAD_URL}"
+    mkdir -p "${ZIG_ROOT}"
+    tar -xJf "${SOURCE_DIR}/zig-${ZIG_VERSION}.tar.xz" -C "${BUILD_DIR}"
+    rm -rf "${ZIG_ROOT}"
+    mv "${BUILD_DIR}/zig-x86_64-linux-${ZIG_VERSION}" "${ZIG_ROOT}"
+  fi
+  export PATH="${ZIG_ROOT}:${PATH}"
+
+  if ! command -v cargo-zigbuild >/dev/null 2>&1; then
+    cargo install cargo-zigbuild --locked --version "${CARGO_ZIGBUILD_VERSION}"
+  fi
+
+  cargo zigbuild \
+    --release \
+    --locked \
+    --package wstunnel-cli \
+    --target "${RUST_TARGET}" \
+    --no-default-features \
+    --features "${FEATURES}"
+fi
 
 mkdir -p "${INSTALL_DIR}/bin"
 cp "target/${RUST_TARGET}/release/wstunnel" "${INSTALL_DIR}/bin/wstunnel"
