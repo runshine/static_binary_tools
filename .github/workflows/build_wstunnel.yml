@@ -1,0 +1,87 @@
+name: build_wstunnel
+on:
+  push:
+    branches:
+      - '**'
+    paths:
+      - .github/workflows/build_wstunnel.yml
+      - build/wstunnel/*
+      - build/common/*
+      - Dockerfile
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: debian:bookworm
+    strategy:
+      matrix:
+        include:
+          - build_name: x86_64
+            rust_target: x86_64-unknown-linux-gnu
+            output_arch: x86_64
+            apt_extra_packages: ""
+          - build_name: aarch64
+            rust_target: aarch64-unknown-linux-gnu
+            output_arch: aarch64
+            apt_extra_packages: gcc-aarch64-linux-gnu
+            linker: aarch64-linux-gnu-gcc
+          - build_name: armhf
+            rust_target: armv7-unknown-linux-gnueabihf
+            output_arch: armhf
+            apt_extra_packages: gcc-arm-linux-gnueabihf
+            linker: arm-linux-gnueabihf-gcc
+          - build_name: armel
+            rust_target: armv5te-unknown-linux-gnueabi
+            output_arch: armel
+            apt_extra_packages: gcc-arm-linux-gnueabi
+            linker: arm-linux-gnueabi-gcc
+          - build_name: riscv64
+            rust_target: riscv64gc-unknown-linux-gnu
+            output_arch: riscv64
+            apt_extra_packages: gcc-riscv64-linux-gnu
+            linker: riscv64-linux-gnu-gcc
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust build deps
+        run: |
+          apt-get update
+          apt-get install -y curl ca-certificates git build-essential pkg-config file perl cmake xz-utils
+          if [ -n "${{ matrix.apt_extra_packages }}" ]; then
+            apt-get install -y ${{ matrix.apt_extra_packages }}
+          fi
+
+      - name: Install Rust toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add ${{ matrix.rust_target }}
+
+      - name: Build binary
+        run: bash ${{ github.workspace }}/build/wstunnel/build.sh
+        env:
+          RUST_TARGET: ${{ matrix.rust_target }}
+          OUTPUT_ARCH: ${{ matrix.output_arch }}
+          LINKER: ${{ matrix.linker }}
+
+      - name: List Dir
+        run: ls -lRt ${{ github.workspace }}
+
+      - name: Upload binary to artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wstunnel-v10.6.2-linux-${{ matrix.build_name }}.tar.gz
+          path: ${{ github.workspace }}/build/wstunnel/install/wstunnel-v10.6.2-linux-${{ matrix.output_arch }}.tar.gz
+
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: v1.0
+          name: "Release v1.0"
+          artifacts: "${{ github.workspace }}/build/wstunnel/install/*"
+          artifactErrorsFailBuild: false
+          allowUpdates: true
+          token: ${{ secrets.GITHUB_TOKEN }}
