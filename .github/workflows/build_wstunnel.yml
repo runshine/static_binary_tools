@@ -47,7 +47,7 @@ jobs:
       - name: Install Rust build deps
         run: |
           apt-get update
-          apt-get install -y curl ca-certificates git build-essential pkg-config file perl cmake xz-utils
+          apt-get install -y bash curl ca-certificates git build-essential pkg-config file perl cmake xz-utils
           if [ -n "${{ matrix.apt_extra_packages }}" ]; then
             apt-get install -y ${{ matrix.apt_extra_packages }}
           fi
