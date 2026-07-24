@@ -53,7 +53,13 @@ jobs:
           fi
 
       - name: Build binary
-        run: /bin/bash ${{ github.workspace }}/build/wstunnel/build.sh
+        run: |
+          cd "${{ github.workspace }}"
+          pwd
+          echo "HOME=$HOME"
+          echo "PATH=$PATH"
+          ls -la build/wstunnel
+          /bin/bash build/wstunnel/build.sh
         env:
           PATH: /github/home/.cargo/bin:/usr/local/cargo/bin:${{ env.PATH }}
           RUST_TARGET: ${{ matrix.rust_target }}
