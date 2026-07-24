@@ -18,29 +18,20 @@ jobs:
       matrix:
         include:
           - build_name: x86_64
-            rust_target: x86_64-unknown-linux-gnu
+            rust_target: x86_64-unknown-linux-musl
             output_arch: x86_64
-            apt_extra_packages: ""
           - build_name: aarch64
-            rust_target: aarch64-unknown-linux-gnu
+            rust_target: aarch64-unknown-linux-musl
             output_arch: aarch64
-            apt_extra_packages: gcc-aarch64-linux-gnu
-            linker: aarch64-linux-gnu-gcc
           - build_name: armhf
-            rust_target: armv7-unknown-linux-gnueabihf
+            rust_target: armv7-unknown-linux-musleabihf
             output_arch: armhf
-            apt_extra_packages: gcc-arm-linux-gnueabihf
-            linker: arm-linux-gnueabihf-gcc
           - build_name: armel
-            rust_target: armv5te-unknown-linux-gnueabi
+            rust_target: armv5te-unknown-linux-musleabi
             output_arch: armel
-            apt_extra_packages: gcc-arm-linux-gnueabi
-            linker: arm-linux-gnueabi-gcc
           - build_name: riscv64
-            rust_target: riscv64gc-unknown-linux-gnu
+            rust_target: riscv64gc-unknown-linux-musl
             output_arch: riscv64
-            apt_extra_packages: gcc-riscv64-linux-gnu
-            linker: riscv64-linux-gnu-gcc
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -49,9 +40,6 @@ jobs:
         run: |
           apt-get update
           apt-get install -y bash curl ca-certificates git build-essential pkg-config file perl cmake xz-utils
-          if [ -n "${{ matrix.apt_extra_packages }}" ]; then
-            apt-get install -y ${{ matrix.apt_extra_packages }}
-          fi
 
       - name: Build binary
         run: |
@@ -72,7 +60,6 @@ jobs:
           PATH: /github/home/.cargo/bin:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
           RUST_TARGET: ${{ matrix.rust_target }}
           OUTPUT_ARCH: ${{ matrix.output_arch }}
-          LINKER: ${{ matrix.linker }}
 
       - name: Upload binary to artifacts
         uses: actions/upload-artifact@v4
