@@ -61,7 +61,7 @@ jobs:
           ls -la build/wstunnel
           /bin/bash build/wstunnel/build.sh
         env:
-          PATH: /github/home/.cargo/bin:/usr/local/cargo/bin:${{ env.PATH }}
+          PATH: /github/home/.cargo/bin:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
           RUST_TARGET: ${{ matrix.rust_target }}
           OUTPUT_ARCH: ${{ matrix.output_arch }}
           LINKER: ${{ matrix.linker }}
