@@ -19,7 +19,7 @@ SOURCE_URL="https://github.com/erebe/wstunnel/archive/refs/tags/${SOURCE_TAR}"
 SOURCE_ROOT="${BUILD_DIR}/wstunnel-${VERSION}"
 ZIG_ROOT="${HOME_SPACE}/zig-${ZIG_VERSION}"
 ZIG_BIN="${ZIG_ROOT}/zig"
-ARMEL_TOOLCHAIN_ROOT="${HOME_SPACE}/arm-unknown-linux-musleabi-cross"
+ARMEL_TOOLCHAIN_ROOT="${HOME_SPACE}/arm-unknown-linux-musleabi"
 
 apt-get update
 apt-get install -y curl ca-certificates git xz-utils build-essential pkg-config file perl cmake
@@ -53,16 +53,27 @@ export PKG_CONFIG_ALLOW_CROSS=1
 export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static"
 
 if [ "${RUST_TARGET}" = "armv5te-unknown-linux-musleabi" ]; then
-  if [ ! -x "${ARMEL_TOOLCHAIN_ROOT}/bin/arm-linux-musleabi-gcc" ]; then
+  if ! find "${ARMEL_TOOLCHAIN_ROOT}/bin" -maxdepth 1 -type f -name '*-gcc' >/dev/null 2>&1; then
     curl -L -o "${SOURCE_DIR}/arm-unknown-linux-musleabi.tar.xz" "${ARMEL_MUSL_TOOLCHAIN_URL}"
     tar -xJf "${SOURCE_DIR}/arm-unknown-linux-musleabi.tar.xz" -C "${BUILD_DIR}"
     rm -rf "${ARMEL_TOOLCHAIN_ROOT}"
-    mv "${BUILD_DIR}/arm-unknown-linux-musleabi-cross" "${ARMEL_TOOLCHAIN_ROOT}"
+    extracted_dir="$(find "${BUILD_DIR}" -maxdepth 1 -mindepth 1 -type d -name 'arm-unknown-linux-musleabi*' | head -n 1)"
+    if [ -z "${extracted_dir}" ]; then
+      echo "Unable to locate extracted armel musl toolchain directory"
+      exit 1
+    fi
+    mv "${extracted_dir}" "${ARMEL_TOOLCHAIN_ROOT}"
   fi
   export PATH="${ARMEL_TOOLCHAIN_ROOT}/bin:${PATH}"
-  export CC_armv5te_unknown_linux_musleabi="arm-linux-musleabi-gcc"
-  export AR_armv5te_unknown_linux_musleabi="arm-linux-musleabi-ar"
-  export CARGO_TARGET_ARMV5TE_UNKNOWN_LINUX_MUSLEABI_LINKER="arm-linux-musleabi-gcc"
+  armel_gcc="$(find "${ARMEL_TOOLCHAIN_ROOT}/bin" -maxdepth 1 -type f -name '*-gcc' | head -n 1)"
+  armel_ar="$(find "${ARMEL_TOOLCHAIN_ROOT}/bin" -maxdepth 1 -type f -name '*-ar' | head -n 1)"
+  if [ -z "${armel_gcc}" ] || [ -z "${armel_ar}" ]; then
+    echo "Unable to locate armel musl compiler tools"
+    exit 1
+  fi
+  export CC_armv5te_unknown_linux_musleabi="${armel_gcc}"
+  export AR_armv5te_unknown_linux_musleabi="${armel_ar}"
+  export CARGO_TARGET_ARMV5TE_UNKNOWN_LINUX_MUSLEABI_LINKER="${armel_gcc}"
   cargo build \
     --release \
     --locked \
@@ -81,7 +92,7 @@ else
   export PATH="${ZIG_ROOT}:${PATH}"
 
   if ! command -v cargo-zigbuild >/dev/null 2>&1; then
-    cargo install cargo-zigbuild --locked --version "${CARGO_ZIGBUILD_VERSION}"
+    cargo install cargo-zigbuild --target x86_64-unknown-linux-gnu --locked --version "${CARGO_ZIGBUILD_VERSION}"
   fi
 
   cargo zigbuild \
