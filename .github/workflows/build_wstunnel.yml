@@ -54,12 +54,19 @@ jobs:
 
       - name: Build binary
         run: |
-          cd "${{ github.workspace }}"
           pwd
           echo "HOME=$HOME"
           echo "PATH=$PATH"
-          ls -la build/wstunnel
-          /bin/bash build/wstunnel/build.sh
+          ls -la . || true
+          ls -la build || true
+          ls -la build/wstunnel || true
+          script_path="$(find . -path './build/wstunnel/build.sh' -print -quit)"
+          echo "script_path=$script_path"
+          if [ -z "$script_path" ]; then
+            echo "build/wstunnel/build.sh not found"
+            exit 1
+          fi
+          /bin/bash "$script_path"
         env:
           PATH: /github/home/.cargo/bin:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
           RUST_TARGET: ${{ matrix.rust_target }}
